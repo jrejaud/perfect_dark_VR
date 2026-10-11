@@ -28,6 +28,7 @@
 #include "console.h"
 #include "fs.h"
 #include "romdata.h"
+#include "input.h"
 #include "utils.h"
 
 s32 g_NetMode = NETMODE_NONE;
@@ -896,6 +897,8 @@ static void netTraceTick(void)
 		return;
 	}
 	nexttick = g_NetTick + 120;
+
+	sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u input textinput=%d", g_NetTick, inputIsTextInputActive());
 
 	for (s32 i = 0; i < MAX_PLAYERS; ++i) {
 		const struct player *pl = g_Vars.players[i];

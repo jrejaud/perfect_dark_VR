@@ -878,9 +878,15 @@ s32 inputReadController(s32 idx, OSContPad *npad)
 
     // === VR INPUT PLAYER 1 ===
     if (idx == 0) {
-        if (optionsGetControlMode(g_Vars.currentplayerstats->mpindex) == CONTROLMODE_12) { // VR-1
+        // Controllers are polled outside the per-player tick, so g_Vars.currentplayer is whichever
+        // player ticked last -- in a net game often a REMOTE player (controlmode NA), which made
+        // this whole block skip and left a VR client unable to walk or fire (SC-6660). The VR
+        // player is always local player 0.
+        struct player *vrpl = g_Vars.players[0] ? g_Vars.players[0] : g_Vars.currentplayer;
+        const s32 vrmpindex = g_Vars.players[0] ? g_Vars.playerstats[0].mpindex : g_Vars.currentplayerstats->mpindex;
+        if (vrpl && optionsGetControlMode(vrmpindex) == CONTROLMODE_12) { // VR-1
             // index 1 = Right hand / index 0 = Left hand
-            if (g_Vars.currentplayer->gunctrl.weaponnum != WEAPON_LASER) {
+            if (vrpl->gunctrl.weaponnum != WEAPON_LASER) {
                 if (get_button_state(1, "trigger")) npad->button |= CONT_G; // Z_TRIG
                 if (get_button_state(0, "grip") && vr_leftHasWeapon) { // Aim left grip
                     if (!vr_grip_for_unarmed) { // if not aim. For unarmed
@@ -944,9 +950,9 @@ s32 inputReadController(s32 idx, OSContPad *npad)
 #endif
 
             // VR: C-Buttons mapped to the left thumbstick (directional mapping)
-            if (g_Vars.currentplayer->pausemode == PAUSEMODE_PAUSED
-//            || g_Vars.currentplayer->activemenumode != AMMODE_CLOSED // enable to use joystick in activemenu
-            || g_Vars.currentplayer->devicesactive & DEVICE_EYESPY) {
+            if (vrpl->pausemode == PAUSEMODE_PAUSED
+//            || vrpl->activemenumode != AMMODE_CLOSED // enable to use joystick in activemenu
+            || vrpl->devicesactive & DEVICE_EYESPY) {
                 XrVector2f leftThumbstick;
                 if (get_2d_input(0, "thumbstick", &leftThumbstick)) {
                     if (leftThumbstick.y > 0.8f) npad->button |= CONT_E;  // U_CBUTTONS
@@ -978,7 +984,7 @@ s32 inputReadController(s32 idx, OSContPad *npad)
             }
 
 
-            if (g_Vars.currentplayer->pausemode != PAUSEMODE_PAUSED &&
+            if (vrpl->pausemode != PAUSEMODE_PAUSED &&
                 !get_button_state(1, "a")) {
                 XrVector2f rightThumbstick;
                 if (get_2d_input(1, "thumbstick", &rightThumbstick)) {
