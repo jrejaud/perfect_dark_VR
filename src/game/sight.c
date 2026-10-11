@@ -29,6 +29,7 @@
 
 #include "../port/vr/vr_openxr.h"
 #include "../port/vr/vr_log.h"
+#include "vr_scope.h"
 
 #include <lib/mtx.h>
 #include <game/camera.h>
@@ -539,13 +540,7 @@ static void sightCalculate3DProjection(f32 crossx, f32 crossy, struct sightprojd
 
     p->render_dist = 1500.0f;
 
-    if (p->hasprop && player->lookingatprop.prop) {
-        struct coord *proppos = &player->lookingatprop.prop->pos;
-        f32 px = proppos->x - campos.x;
-        f32 py = proppos->y - campos.y;
-        f32 pz = proppos->z - campos.z;
-        p->render_dist = sqrtf(px*px + py*py + pz*pz);
-    } else if (!p->is_sky) {
+    if (!p->is_sky) {
         p->render_dist = p->dist;
     }
 

@@ -15767,9 +15767,12 @@ void objHit(struct shotdata *shotdata, struct hit *hit)
 
 	obj = hit->prop->obj;
 
-	sp110.x = shotdata->gunpos2d.x - hit->distance * shotdata->gundir2d.x / shotdata->gundir2d.z;
-	sp110.y = shotdata->gunpos2d.y - hit->distance * shotdata->gundir2d.y / shotdata->gundir2d.z;
-	sp110.z = shotdata->gunpos2d.z - hit->distance;
+	{
+		f32 dz = hit->distance + shotdata->gunpos2d.z;
+		sp110.x = shotdata->gunpos2d.x - dz * shotdata->gundir2d.x / shotdata->gundir2d.z;
+		sp110.y = shotdata->gunpos2d.y - dz * shotdata->gundir2d.y / shotdata->gundir2d.z;
+		sp110.z = -hit->distance;
+	}
 
 	mtx4TransformVecInPlace(camGetProjectionMtxF(), &sp110);
 

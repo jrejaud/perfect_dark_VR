@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <algorithm>
+#include <cmath>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -17,6 +19,7 @@
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
 #include "gfx_pc.h"
+#include "vr_scope.h"
 #include "../vr/vr_log.h"
 #ifdef ANDROID
 #include <android/log.h>
@@ -119,6 +122,12 @@ extern "C" int vrGetMenuMirrorMVPList(int eyeIndex, VrMirrorMenuEntry* outEntrie
 extern GLuint gfx_opengl_get_vr_menu_texture(void);
 extern GLuint gfx_opengl_get_vr_menu_texture_R(void);
 extern GLuint gfx_opengl_get_vr_menu_texture_H(void);
+
+struct VrMirrorScopeEntry {
+    GLuint tex;
+    float mvp[16];
+};
+extern "C" int vrGetScopeMirrorMVPList(int eyeIndex, VrMirrorScopeEntry* outEntries);
 //---
 
 // Fullscreen tri VS with explicit vertex attribute
@@ -309,6 +318,9 @@ struct ShaderProgram {
     GLint TanHalfFovLeft;
     GLint TanHalfFovRight;
 
+    GLint scopeLocation;
+    GLint scopeVPLocation;
+    GLint scopeHeadPLocation;
 };
 
 
@@ -325,6 +337,12 @@ struct Framebuffer {
 };
 
 static std::map<pair<uint64_t, uint32_t>, struct ShaderProgram> shader_program_pool;
+static struct ShaderProgram* s_curPrg = nullptr;
+static GLuint s_boundTex[2] = { 0, 0 };
+static int s_activeTexUnit = 0;
+static bool s_depthArgs[4] = { false, false, false, false };
+static uint16_t s_depthZmode = 0;
+static bool s_alphaArgs[2] = { false, false };
 static GLuint opengl_vbo;
 static GLuint opengl_vao;
 static bool current_depth_mask;
@@ -465,6 +483,10 @@ static void mv_blit_init() {
     mv_blit_uSbsLoc = glGetUniformLocation(mv_blit_prog, "uSbs");
 
     if (s_mv_blit_vao == 0) {
+        GLint prevVao = 0, prevVbo = 0;
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevVbo);
+
         glGenVertexArrays(1, &s_mv_blit_vao);
         glGenBuffers(1, &s_mv_blit_vbo);
         glBindVertexArray(s_mv_blit_vao);
@@ -480,8 +502,8 @@ static void mv_blit_init() {
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
 
-        glBindVertexArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray((GLuint)prevVao);
+        glBindBuffer(GL_ARRAY_BUFFER, (GLuint)prevVbo);
     }
 }
 
@@ -563,7 +585,9 @@ extern "C" void gfx_opengl_draw_mirror_menu_overlay(GLuint menuTex, const float*
     menuOverlayInit();
 
     GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean cullWasEnabled  = glIsEnabled(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_SCISSOR_TEST);
@@ -583,6 +607,7 @@ extern "C" void gfx_opengl_draw_mirror_menu_overlay(GLuint menuTex, const float*
 
     glDisable(GL_SCISSOR_TEST);
     if (depthWasEnabled) glEnable(GL_DEPTH_TEST);
+    if (cullWasEnabled)  glEnable(GL_CULL_FACE);
     glUseProgram(0);
 }
 #endif
@@ -606,6 +631,11 @@ static struct GfxClipParameters gfx_opengl_get_clip_parameters(void) {
 static void gfx_opengl_vertex_array_set_attribs(struct ShaderProgram* prg) {
     size_t num_floats = prg->num_floats;
     size_t pos = 0;
+
+    if (opengl_vao) {
+        glBindVertexArray(opengl_vao);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
 
     for (int i = 0; i < prg->num_attribs; i++) {
         if (prg->attrib_locations[i] >= 0) {
@@ -657,6 +687,8 @@ static void gfx_opengl_set_uniforms(struct ShaderProgram* prg) {
         if (prg->TanHalfFovRight >= 0)
             glUniform1f(prg->TanHalfFovRight, g_eyeTanHalfFov[1]);
 
+        if (prg->scopeLocation >= 0)
+            glUniform1i(prg->scopeLocation, 0);
 
     }
 
@@ -664,6 +696,9 @@ static void gfx_opengl_set_uniforms(struct ShaderProgram* prg) {
 
 static void gfx_opengl_unload_shader(struct ShaderProgram* old_prg) {
     if (old_prg != NULL) {
+        if (opengl_vao) {
+            glBindVertexArray(opengl_vao);
+        }
         for (int i = 0; i < old_prg->num_attribs; i++) {
             if (old_prg->attrib_locations[i] >= 0) {
                 glDisableVertexAttribArray(old_prg->attrib_locations[i]);
@@ -674,6 +709,7 @@ static void gfx_opengl_unload_shader(struct ShaderProgram* old_prg) {
 
 static void gfx_opengl_load_shader(struct ShaderProgram* new_prg) {
     // if (!new_prg) return;
+    s_curPrg = new_prg;
     glUseProgram(new_prg->opengl_program_id);
     gfx_opengl_vertex_array_set_attribs(new_prg);
     gfx_opengl_set_uniforms(new_prg);
@@ -887,6 +923,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         append_line(vs_buf, &vs_len, "uniform int uIsTitleLegal;");
         append_line(vs_buf, &vs_len, "uniform float uTanHalfFovLeft;");
         append_line(vs_buf, &vs_len, "uniform float uTanHalfFovRight;");
+        append_line(vs_buf, &vs_len, "uniform int uScope;");
+        append_line(vs_buf, &vs_len, "uniform mat4 uScopeVP;");
+        append_line(vs_buf, &vs_len, "uniform vec2 uHeadP;");
 
     }
 
@@ -953,7 +992,11 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     // VR
     if (use_multiview) {
         append_line(vs_buf, &vs_len, vr_shader);
-
+        append_line(vs_buf, &vs_len,
+                    "    if (uScope == 1) {"
+                    " vec4 c = vec4(aVtxPos.x / uHeadP.x, aVtxPos.y / uHeadP.y, -aVtxPos.w, 1.0);"
+                    " gl_Position = (gl_ViewID_OVR == 0u) ? uScopeVP * c : vec4(0.0, 0.0, 2.0, 1.0);"
+                    " }");
     }
 
 
@@ -1285,7 +1328,11 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
                                                                 "three_point_filter1");
 
     // VR...
+    prg->scopeLocation = prg->scopeVPLocation = prg->scopeHeadPLocation = -1;
     if (use_multiview) {
+        prg->scopeLocation = glGetUniformLocation(shader_program, "uScope");
+        prg->scopeVPLocation = glGetUniformLocation(shader_program, "uScopeVP");
+        prg->scopeHeadPLocation = glGetUniformLocation(shader_program, "uHeadP");
         prg->eyeOffsetLeftLocation = glGetUniformLocation(shader_program, "uEyeOffsetLeft");
         prg->eyeOffsetRightLocation = glGetUniformLocation(shader_program, "uEyeOffsetRight");
         prg->isMenuLocation = glGetUniformLocation(shader_program, "uIsMenu");
@@ -1313,6 +1360,7 @@ static void gfx_opengl_shader_get_info(struct ShaderProgram* prg, uint8_t* num_i
 }
 
 static void gfx_opengl_clear_shaders(void) {
+    s_curPrg = nullptr;
     glUseProgram(0);
     for (auto& pair : shader_program_pool) {
         glDeleteProgram(pair.second.opengl_program_id);
@@ -1335,6 +1383,8 @@ static void gfx_opengl_select_texture(int tile, GLuint texture_id, bool linear_f
 
     glActiveTexture(GL_TEXTURE0 + tile);
     glBindTexture(GL_TEXTURE_2D, texture_id);
+    s_boundTex[tile] = texture_id;
+    s_activeTexUnit = tile;
 
     current_textures_linear_filter[tile] = linear_filter;
 }
@@ -1381,6 +1431,7 @@ static void gfx_opengl_set_sampler_parameters(int tile, bool linear_filter, uint
     }
 
     glActiveTexture(GL_TEXTURE0 + tile);
+    s_activeTexUnit = tile;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gfx_cm_to_opengl(cms));
@@ -1394,6 +1445,11 @@ static void gfx_opengl_set_sampler_parameters(int tile, bool linear_filter, uint
 }
 
 static void gfx_opengl_set_depth_mode(bool depth_test, bool depth_update, bool depth_compare, bool depth_source_prim, uint16_t zmode) {
+    s_depthArgs[0] = depth_test;
+    s_depthArgs[1] = depth_update;
+    s_depthArgs[2] = depth_compare;
+    s_depthArgs[3] = depth_source_prim;
+    s_depthZmode = zmode;
     if (depth_test) {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(depth_update ? GL_TRUE : GL_FALSE);
@@ -1455,6 +1511,8 @@ static void gfx_opengl_set_scissor(int x, int y, int width, int height) {
 }
 
 static void gfx_opengl_set_use_alpha(bool use_alpha, bool modulate) { // VR
+    s_alphaArgs[0] = use_alpha;
+    s_alphaArgs[1] = modulate;
     if (use_alpha) glEnable(GL_BLEND);
     else glDisable(GL_BLEND);
 
@@ -1471,11 +1529,323 @@ static void gfx_opengl_set_use_alpha(bool use_alpha, bool modulate) { // VR
 
 
 #define VBO_RING_BUFFER_SIZE (1024 * 1024 * 16) // 16 Mo
+static size_t s_ring_offset = 0;
+static bool s_vbo_allocated = false;
+
+// ============================================================================
+// VR - 3D weapon scope (ported from GoldenEye VR)
+// ============================================================================
+struct GevrScopeDraw {
+    struct ShaderProgram* prg;
+    GLint first;
+    GLsizei count;
+    GLuint tex[2];
+    bool linear[2];
+    bool depth[4];
+    uint16_t zmode;
+    bool alpha[2];
+    uint8_t mask;   // which scopes see it: bit (1 << hand)
+};
+
+#define GEVR_SCOPE_RES 512
+static std::vector<GevrScopeDraw> s_scopeDraws;
+static bool s_scopeRec = false;
+static bool s_scopeTaken[2] = { false, false };
+static bool s_scopeDrawn[2] = { false, false };
+static uint8_t s_scopeOnlyMask = 0;
+static float s_scopeVP[2][16];
+static float s_scopeHeadP[2][2];
+static GLuint s_scopeFbo[2] = { 0, 0 };
+static GLuint s_scopeTex[2] = { 0, 0 };
+static GLuint s_scopeDepth[2] = { 0, 0 };
+
+static bool gevr_scope_any_taken(void)
+{
+    return s_scopeTaken[0] || s_scopeTaken[1];
+}
+
+void gfx_vr_scope_record(bool on, bool invert_y)
+{
+    s_scopeRec = false;
+    if (!on) {
+        return;
+    }
+    s_scopeDraws.clear();
+    s_scopeTaken[0] = s_scopeTaken[1] = false;
+    if (!gevrScopeOn) {
+        return;
+    }
+    for (int h = 0; h < 2; h++) {
+        const GevrScopeState& st = gevrScope[h];
+        if (!(gevrScopeOn & (1 << h)) || fabsf(st.headP[0]) < 1e-6f || fabsf(st.headP[1]) < 1e-6f) {
+            continue;
+        }
+        memcpy(s_scopeVP[h], st.vp, sizeof(s_scopeVP[h]));
+        s_scopeHeadP[h][0] = st.headP[0];
+        s_scopeHeadP[h][1] = invert_y ? -st.headP[1] : st.headP[1];
+        s_scopeTaken[h] = true;
+    }
+    s_scopeRec = gevr_scope_any_taken();
+    if (s_scopeRec && (!s_vbo_allocated || s_ring_offset > (VBO_RING_BUFFER_SIZE / 2))) {
+        glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
+        glBufferData(GL_ARRAY_BUFFER, VBO_RING_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+        s_ring_offset = 0;
+        s_vbo_allocated = true;
+    }
+}
+
+static bool gevr_scope_sees(int hand, const float* v, size_t len, size_t tris)
+{
+    const size_t n = 3 * tris;
+    if (n == 0) {
+        return false;
+    }
+    const size_t stride = len / n;
+    const float* M = s_scopeVP[hand];
+    const float ix = 1.0f / s_scopeHeadP[hand][0], iy = 1.0f / s_scopeHeadP[hand][1];
+    unsigned all = 0x1f;
+    for (size_t i = 0; i < n; i++, v += stride) {
+        const float cx = v[0] * ix, cy = v[1] * iy, cz = -v[3];
+        const float x = M[0] * cx + M[4] * cy + M[8] * cz + M[12];
+        const float y = M[1] * cx + M[5] * cy + M[9] * cz + M[13];
+        const float w = M[3] * cx + M[7] * cy + M[11] * cz + M[15];
+        unsigned out = 0;
+        if (x < -w) out |= 1;
+        if (x > w) out |= 2;
+        if (y < -w) out |= 4;
+        if (y > w) out |= 8;
+        if (w <= 0.0f) out |= 16;
+        all &= out;
+        if (all == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void gfx_vr_scope_only(int hand)
+{
+    s_scopeOnlyMask = (hand == 0 || hand == 1) && s_scopeTaken[hand] ? (uint8_t)(1 << hand) : 0;
+}
+
+static void gevr_scope_keep(GLint first, const float* buf_vbo, size_t buf_vbo_len, size_t buf_vbo_num_tris)
+{
+    if (s_curPrg == nullptr || gForceFlatShaderForMenu || vr_dl_is_pause_or_menu || buf_vbo[3] == 1.0f) {
+        return;
+    }
+    uint8_t mask = s_scopeOnlyMask;
+    if (mask == 0) {
+        for (int h = 0; h < 2; h++) {
+            if (s_scopeTaken[h] && gevr_scope_sees(h, buf_vbo, buf_vbo_len, buf_vbo_num_tris)) {
+                mask |= (uint8_t)(1 << h);
+            }
+        }
+        if (mask == 0) {
+            return;
+        }
+    }
+    GevrScopeDraw d;
+    d.mask = mask;
+    d.prg = s_curPrg;
+    d.first = first;
+    d.count = (GLsizei)(3 * buf_vbo_num_tris);
+    for (int t = 0; t < 2; t++) {
+        d.tex[t] = s_boundTex[t];
+        d.linear[t] = current_textures_linear_filter[t];
+    }
+    memcpy(d.depth, s_depthArgs, sizeof(d.depth));
+    if (s_scopeOnlyMask != 0) {
+        d.depth[0] = false;
+        d.depth[1] = false;
+    }
+    d.zmode = s_depthZmode;
+    d.alpha[0] = s_alphaArgs[0];
+    d.alpha[1] = s_alphaArgs[1];
+    s_scopeDraws.push_back(d);
+}
+
+static void gevr_scope_make_target(int hand)
+{
+    if (s_scopeFbo[hand]) {
+        return;
+    }
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGenTextures(1, &s_scopeTex[hand]);
+    glBindTexture(GL_TEXTURE_2D, s_scopeTex[hand]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, GEVR_SCOPE_RES, GEVR_SCOPE_RES, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenRenderbuffers(1, &s_scopeDepth[hand]);
+    glBindRenderbuffer(GL_RENDERBUFFER, s_scopeDepth[hand]);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, GEVR_SCOPE_RES, GEVR_SCOPE_RES);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    glGenFramebuffers(1, &s_scopeFbo[hand]);
+    glBindFramebuffer(GL_FRAMEBUFFER, s_scopeFbo[hand]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_scopeTex[hand], 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, s_scopeDepth[hand]);
+    const GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    sysLogPrintf(st == GL_FRAMEBUFFER_COMPLETE ? LOG_NOTE : LOG_WARNING,
+                 "scope: hand %d %dx%d target %s (0x%x)", hand, GEVR_SCOPE_RES, GEVR_SCOPE_RES,
+                 st == GL_FRAMEBUFFER_COMPLETE ? "ready" : "incomplete", st);
+    glBindTexture(GL_TEXTURE_2D, s_boundTex[s_activeTexUnit]);
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+}
+
+void gfx_vr_scope_prepare(void)
+{
+    gevr_scope_make_target(0);
+    gevr_scope_make_target(1);
+}
+
+void gfx_vr_scope_render(void)
+{
+    s_scopeRec = false;
+    s_scopeOnlyMask = 0;
+    if (!gevr_scope_any_taken()) {
+        return;
+    }
+    bool taken[2] = { s_scopeTaken[0], s_scopeTaken[1] };
+    s_scopeTaken[0] = s_scopeTaken[1] = false;
+
+    GLint prevDraw = 0, prevRead = 0, prevVao = 0, vp[4], sc[4], depthFunc = GL_LEQUAL;
+    GLint blendSrcRgb = GL_ONE, blendDstRgb = GL_ZERO, blendSrcA = GL_ONE, blendDstA = GL_ZERO;
+    GLfloat clearCol[4], offFactor = 0.0f, offUnits = 0.0f;
+    GLboolean depthMask = GL_TRUE;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDraw);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevRead);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_VIEWPORT, vp);
+    glGetIntegerv(GL_SCISSOR_BOX, sc);
+    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcA);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstA);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, clearCol);
+    glGetFloatv(GL_POLYGON_OFFSET_FACTOR, &offFactor);
+    glGetFloatv(GL_POLYGON_OFFSET_UNITS, &offUnits);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+    const GLboolean scissorOn = glIsEnabled(GL_SCISSOR_TEST);
+    const GLboolean depthOn = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blendOn = glIsEnabled(GL_BLEND);
+    const GLboolean offsetOn = glIsEnabled(GL_POLYGON_OFFSET_FILL);
+    struct ShaderProgram* const prevPrg = s_curPrg;
+    bool savedDepth[4], savedAlpha[2];
+    memcpy(savedDepth, s_depthArgs, sizeof(savedDepth));
+    memcpy(savedAlpha, s_alphaArgs, sizeof(savedAlpha));
+    const uint16_t savedZmode = s_depthZmode;
+    const bool savedMask = current_depth_mask;
+
+    if (opengl_vao) {
+        glBindVertexArray(opengl_vao);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
+
+    static std::vector<struct ShaderProgram*> touched;
+    touched.clear();
+    struct ShaderProgram* bound = prevPrg;
+    for (int hand = 0; hand < 2; hand++) {
+        if (!taken[hand]) {
+            continue;
+        }
+        gevr_scope_make_target(hand);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_scopeFbo[hand]);
+        glViewport(0, 0, GEVR_SCOPE_RES, GEVR_SCOPE_RES);
+        glDisable(GL_SCISSOR_TEST);
+        glDepthMask(GL_TRUE);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+        const GevrScopeDraw* last = nullptr;
+        for (const GevrScopeDraw& d : s_scopeDraws) {
+            if (!(d.mask & (1 << hand))) {
+                continue;
+            }
+            if (last == nullptr || d.prg != bound) {
+                if (last != nullptr || d.prg != bound) {
+                    gfx_opengl_unload_shader(bound);
+                }
+                gfx_opengl_load_shader(d.prg);
+                bound = d.prg;
+                if (std::find(touched.begin(), touched.end(), d.prg) == touched.end()) {
+                    touched.push_back(d.prg);
+                }
+                if (d.prg->scopeLocation >= 0) glUniform1i(d.prg->scopeLocation, 1);
+                if (d.prg->scopeVPLocation >= 0) glUniformMatrix4fv(d.prg->scopeVPLocation, 1, GL_FALSE, s_scopeVP[hand]);
+                if (d.prg->scopeHeadPLocation >= 0) glUniform2f(d.prg->scopeHeadPLocation, s_scopeHeadP[hand][0], s_scopeHeadP[hand][1]);
+            }
+            for (int t = 0; t < 2; t++) {
+                if (d.prg->used_textures[t]) {
+                    glActiveTexture(GL_TEXTURE0 + t);
+                    glBindTexture(GL_TEXTURE_2D, d.tex[t]);
+                    if (d.prg->three_point_filter_locations[t] >= 0) {
+                        glUniform1i(d.prg->three_point_filter_locations[t], d.linear[t]);
+                    }
+                }
+            }
+            if (last == nullptr || memcmp(d.depth, last->depth, sizeof(d.depth)) != 0 || d.zmode != last->zmode) {
+                gfx_opengl_set_depth_mode(d.depth[0], d.depth[1], d.depth[2], d.depth[3], d.zmode);
+            }
+            if (last == nullptr || d.alpha[0] != last->alpha[0] || d.alpha[1] != last->alpha[1]) {
+                gfx_opengl_set_use_alpha(d.alpha[0], d.alpha[1]);
+            }
+            glDrawArrays(GL_TRIANGLES, d.first, d.count);
+            last = &d;
+        }
+        s_scopeDrawn[hand] = true;
+    }
+
+    for (struct ShaderProgram* p : touched) {
+        if (p->scopeLocation >= 0) {
+            glUseProgram(p->opengl_program_id);
+            glUniform1i(p->scopeLocation, 0);
+        }
+    }
+    if (bound != prevPrg) {
+        gfx_opengl_unload_shader(bound);
+    }
+    if (prevPrg != nullptr) {
+        gfx_opengl_load_shader(prevPrg);
+    } else {
+        s_curPrg = nullptr;
+        glUseProgram(0);
+    }
+    for (int t = 0; t < 2; t++) {
+        glActiveTexture(GL_TEXTURE0 + t);
+        glBindTexture(GL_TEXTURE_2D, s_boundTex[t]);
+    }
+    glActiveTexture(GL_TEXTURE0 + s_activeTexUnit);
+    memcpy(s_depthArgs, savedDepth, sizeof(savedDepth));
+    memcpy(s_alphaArgs, savedAlpha, sizeof(savedAlpha));
+    s_depthZmode = savedZmode;
+    current_depth_mask = savedMask;
+    if (depthOn) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    glDepthMask(depthMask);
+    glDepthFunc((GLenum)depthFunc);
+    if (offsetOn) glEnable(GL_POLYGON_OFFSET_FILL); else glDisable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(offFactor, offUnits);
+    if (blendOn) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glBlendFuncSeparate((GLenum)blendSrcRgb, (GLenum)blendDstRgb, (GLenum)blendSrcA, (GLenum)blendDstA);
+    glClearColor(clearCol[0], clearCol[1], clearCol[2], clearCol[3]);
+    glBindVertexArray((GLuint)prevVao);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prevDraw);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prevRead);
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+    glScissor(sc[0], sc[1], sc[2], sc[3]);
+    if (scissorOn) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+
+    s_scopeDraws.clear();
+}
+
+GLuint gfx_vr_scope_texture(int hand)
+{
+    return (hand == 0 || hand == 1) && s_scopeDrawn[hand] ? s_scopeTex[hand] : 0;
+}
 
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
-    static size_t s_ring_offset = 0;
-    static bool s_vbo_allocated = false;
-
     size_t draw_size_bytes = sizeof(float) * buf_vbo_len;
     size_t total_vertices = 3 * buf_vbo_num_tris;
     if (total_vertices == 0) return;
@@ -1511,6 +1881,18 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
         s_ring_offset = 0;
     }
 
+    GLint first_vertex_index = (GLint)(s_ring_offset / vertex_stride_bytes);
+    if (mapped_ptr == NULL) first_vertex_index = 0; // Fallback
+
+    s_ring_offset += draw_size_bytes;
+
+    if (s_scopeRec || s_scopeOnlyMask) {
+        gevr_scope_keep(first_vertex_index, buf_vbo, buf_vbo_len, buf_vbo_num_tris);
+        if (s_scopeOnlyMask) {
+            return; // scope's own sight: not for the eyes
+        }
+    }
+
     // --- Uniforms Multiview ---
     if (use_multiview) {
         if (gForceFlatShaderForMenu) {
@@ -1522,12 +1904,7 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
         }
     }
 
-    GLint first_vertex_index = (GLint)(s_ring_offset / vertex_stride_bytes);
-    if (mapped_ptr == NULL) first_vertex_index = 0; // Fallback
-
     glDrawArrays(GL_TRIANGLES, first_vertex_index, total_vertices);
-
-    s_ring_offset += draw_size_bytes;
 }
 
 typedef void (APIENTRY* DEBUGPROC)(GLenum source,
@@ -1783,10 +2160,9 @@ static void gfx_opengl_init(void) {
     if (gl_core_profile || gl_es) {
         // warn the user that odd behavior can occur
         sysLogPrintf(LOG_WARNING, "GL: using core profile or ES, watch out for errors");
-        // core/ES will fail badly if we don't use a VAO for our VBO
-        glGenVertexArrays(1, &opengl_vao);
-        glBindVertexArray(opengl_vao);
     }
+    glGenVertexArrays(1, &opengl_vao);
+    glBindVertexArray(opengl_vao);
 
     if (GLAD_GL_ARB_depth_clamp) {
         glEnable(GL_DEPTH_CLAMP);
@@ -1807,6 +2183,10 @@ static void gfx_opengl_on_resize(void) {
 
 static void gfx_opengl_start_frame(void) {
     frame_count++;
+
+    s_scopeDrawn[0] = s_scopeDrawn[1] = false;
+    s_scopeRec = false;
+    s_scopeOnlyMask = 0;
 
     gVrMenuLWasClearedThisFrame = false;
     gVrMenuLCaptureDepth = 0;
@@ -2315,6 +2695,8 @@ void gfx_opengl_select_texture_fb(int fb_id) {
     // glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D, framebuffers[fb_id].clrbuf);
+    s_boundTex[0] = framebuffers[fb_id].clrbuf;
+    s_activeTexUnit = 0;
 
     current_textures_linear_filter[0] = true;
 }
@@ -2388,10 +2770,8 @@ void gfx_opengl_copy_framebuffer(int fb_dst, int fb_src, int left, int top, bool
     // Fix for background menu, camspy, cloaking effect on enemies or bots (G5 building / challenges)
     if (fb_dst != 4 && framebuffers[0].is_multiview) { // fb_dst 4 = cutescene
 
-        mv_blit_init();
-
-        // Minimal GL state backup
-        GLint prevFbo = 0, prevProg = 0, prevVao = 0;
+        // Minimal GL state backup (before mv_blit_init)
+        GLint prevFbo = 0, prevProg = 0, prevVao = 0, prevVbo = 0;
         GLint viewport[4];
         GLboolean prevDepthTest = GL_FALSE;
         GLboolean prevDepthMask = GL_FALSE;
@@ -2401,11 +2781,14 @@ void gfx_opengl_copy_framebuffer(int fb_dst, int fb_src, int left, int top, bool
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
         glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
         glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevVbo);
         glGetIntegerv(GL_VIEWPORT, viewport);
         glGetBooleanv(GL_DEPTH_TEST, &prevDepthTest);
         glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
         glGetBooleanv(GL_BLEND, &prevBlend);
         glGetBooleanv(GL_SCISSOR_TEST, &prevScissor);
+
+        mv_blit_init();
 
 
         // Calculation of normalized UVs corresponding to the source rectangle
@@ -2467,9 +2850,11 @@ void gfx_opengl_copy_framebuffer(int fb_dst, int fb_src, int left, int top, bool
 
         // Unbind texture array from GL_TEXTURE0 so it doesn't leak into subsequent draws
         glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        glActiveTexture(GL_TEXTURE0 + s_activeTexUnit);
 
         // Restore GL state
         glBindVertexArray((GLuint)prevVao);
+        glBindBuffer(GL_ARRAY_BUFFER, (GLuint)prevVbo);
         glUseProgram(prevProg);
         glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
@@ -2610,16 +2995,15 @@ static void gfx_opengl_mirror_to_desktop(
     extern SDL_GLContext ctx;
     if (!mirror_wnd || !mirror_ctx) return;
 
-    gfx_opengl_init_mirror_shader();
-
     // Letterbox calculation: rendering area in UV coordinates [0..1]
     float src_ratio = (float)src_w / (float)src_h;
     float dst_ratio = (float)dst_w / (float)dst_h;
     float rect_x = 0.0f, rect_y = 0.0f, rect_w = 1.0f, rect_h = 1.0f;
 
-
     // ── Switch to mirror_wnd ──
     SDL_GL_MakeCurrent(mirror_wnd, mirror_ctx);
+
+    gfx_opengl_init_mirror_shader();
 
     // Disable auto sRGB conversion on the desktop backbuffer
     glDisable(GL_FRAMEBUFFER_SRGB);
@@ -2686,6 +3070,12 @@ static void gfx_opengl_mirror_to_desktop(
             gfx_opengl_draw_mirror_menu_overlay(tex, entriesL[i].mvp, 0, 0, halfW, dst_h);
         }
 
+        VrMirrorScopeEntry scopesL[2];
+        int numScopesL = vrGetScopeMirrorMVPList(0, scopesL);
+        for (int i = 0; i < numScopesL; i++) {
+            gfx_opengl_draw_mirror_menu_overlay(scopesL[i].tex, scopesL[i].mvp, 0, 0, halfW, dst_h);
+        }
+
         VrMirrorMenuEntry entriesR[3];
         int nR = vrGetMenuMirrorMVPList(1, entriesR);
         for (int i = 0; i < nR; i++) {
@@ -2696,6 +3086,12 @@ static void gfx_opengl_mirror_to_desktop(
                 case VR_MIRROR_MENU_H: tex = gfx_opengl_get_vr_menu_texture_H(); break;
             }
             gfx_opengl_draw_mirror_menu_overlay(tex, entriesR[i].mvp, halfW, 0, dst_w - halfW, dst_h);
+        }
+
+        VrMirrorScopeEntry scopesR[2];
+        int numScopesR = vrGetScopeMirrorMVPList(1, scopesR);
+        for (int i = 0; i < numScopesR; i++) {
+            gfx_opengl_draw_mirror_menu_overlay(scopesR[i].tex, scopesR[i].mvp, halfW, 0, dst_w - halfW, dst_h);
         }
 
         // Restore the full-screen viewport for the rest
@@ -2712,6 +3108,12 @@ static void gfx_opengl_mirror_to_desktop(
                 case VR_MIRROR_MENU_H: tex = gfx_opengl_get_vr_menu_texture_H(); break;
             }
             gfx_opengl_draw_mirror_menu_overlay(tex, entries[i].mvp, 0, 0, dst_w, dst_h);
+        }
+
+        VrMirrorScopeEntry scopes[2];
+        int numScopes = vrGetScopeMirrorMVPList(mirrorEye, scopes);
+        for (int i = 0; i < numScopes; i++) {
+            gfx_opengl_draw_mirror_menu_overlay(scopes[i].tex, scopes[i].mvp, 0, 0, dst_w, dst_h);
         }
     }
 

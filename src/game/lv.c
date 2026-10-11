@@ -106,6 +106,7 @@
 
 #include "../vr/vr_openxr.h"
 #include "../vr/vr_log.h"
+#include "vr_scope.h"
 
 extern int vr_get_internal_render_width();
 extern int vr_get_internal_render_height();
@@ -1038,6 +1039,12 @@ Gfx *lvRenderFPS(Gfx *gdl)
 
 Gfx *lvRender(Gfx *gdl)
 {
+    gevrScopeOn = 0;
+    gevrScope[0].gunValid = 0;
+    gevrScope[1].gunValid = 0;
+    gevrScopeHand[0] = 0;
+    gevrScopeHand[1] = 0;
+
     gSPSegment(gdl++, SPSEGMENT_PHYSICAL, 0x00000000);
 
 #if VERSION >= VERSION_NTSC_1_0
@@ -1223,6 +1230,7 @@ Gfx *lvRender(Gfx *gdl)
             gdl = viPrepareZbuf(gdl);
             gdl = vi0000b1d0(gdl);
             gdl = bgScissorToViewport(gdl);
+            gDPNoOpTag(gdl++, VR_SCOPE_REC_BEGIN);
             artifactsClear();
 
             if ((g_Vars.stagenum != STAGE_CITRAINING || (var80087260 <= 0 && g_MenuData.root != MENUROOT_MPSETUP))
@@ -1441,6 +1449,7 @@ Gfx *lvRender(Gfx *gdl)
                         gdl = bgRenderArtifacts(gdl);
                     }
                 }
+                gDPNoOpTag(gdl++, VR_SCOPE_REC_END);
 
                 if (g_DebugScreenshotRgb <= 0) {
                     static struct sndstate *g_CutsceneStaticAudioHandle = NULL;

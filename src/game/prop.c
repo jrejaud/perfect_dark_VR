@@ -1191,15 +1191,15 @@ struct prop *propFindAimingAt(s32 handnum, bool isshooting, u32 context)
 
     if (context == FINDPROPCONTEXT_SHOOT && bgunGetWeaponNum(HAND_RIGHT) == WEAPON_REAPER) {
         gunpos2d.y -= 15 * RANDOMFRAC();
+        mtx4TransformVec(camGetProjectionMtxF(), &gunpos2d, &gunpos3d);
+    } else {
+        struct hand *hand = &g_Vars.currentplayer->hands[handnum];
+        gunpos3d.x = hand->muzzlepos.x;
+        gunpos3d.y = hand->muzzlepos.y;
+        gunpos3d.z = hand->muzzlepos.z;
     }
 
-    mtx4TransformVec(camGetProjectionMtxF(), &gunpos2d, &gunpos3d);
     mtx4RotateVec(camGetProjectionMtxF(), &gundir2d, &gundir3d);
-
-    struct hand *hand = &g_Vars.currentplayer->hands[handnum];
-    gunpos3d.x = hand->muzzlepos.x;
-    gunpos3d.y = hand->muzzlepos.y;
-    gunpos3d.z = hand->muzzlepos.z;
 
     struct prop *result = shotCalculateHits(handnum, isshooting, &gunpos2d, &gundir2d,
                                             &gunpos3d, &gundir3d, handnum,

@@ -66,6 +66,7 @@
 
 #include "../../port/vr/vr_openxr.h"
 #include "../../port/vr/vr_log.h"
+#include "vr_scope.h"
 
 
 #include <game/bg.h>
@@ -8717,15 +8718,7 @@ void bgunCalculatePlayerShotSpread(struct coord* gunpos2d, struct coord* gundir2
 
     gunpos2d->x = muzzlescreen.x;
     gunpos2d->y = muzzlescreen.y;
-
-    // --- Linear view-space Z for cam0f0b4c3c ---
-    float vz = camGetWorldToScreenMtxf()->m[0][2] * hand->muzzlepos.x
-               + camGetWorldToScreenMtxf()->m[1][2] * hand->muzzlepos.y
-               + camGetWorldToScreenMtxf()->m[2][2] * hand->muzzlepos.z
-               + camGetWorldToScreenMtxf()->m[3][2];
-
-    gunpos2d->z = (vz > 0.0f) ? vz : 1.0f;
-
+    gunpos2d->z = muzzlescreen.z;
 }
 
 void bgunCalculateBotShotSpread(struct coord* arg0, s32 weaponnum, s32 funcnum, bool arg3, s32 crouchpos, bool dual)
@@ -10367,7 +10360,7 @@ void bgunUpdateLasersight(struct hand* hand, struct modeldef* modeldef, s32 hand
             return;
         }
 
-        if (vrLaserDotAllowed(weaponnum)
+        if (vrLaserDotAllowed(hand->gset.weaponnum)
             && (hand->dotpos.x != 0.0f || hand->dotpos.y != 0.0f || hand->dotpos.z != 0.0f))
         {
             struct coord dummyNear = {0.0f, 0.0f, 0.0f};
@@ -11017,6 +11010,9 @@ static inline f32 bgunGetFovOffsetY(void)
 
 #endif
 
+static Mtxf g_vrScopeGunMtx[2];
+static bool g_vrScopeGunMtxValid[2] = { false, false };
+
 void bgun0f0a5550(s32 handnum) {
     u8 *mtxallocation;
     Mtxf sp2c4;
@@ -11045,6 +11041,10 @@ void bgun0f0a5550(s32 handnum) {
     Mtxf sp124;
     struct coord sp118;
     s32 j;
+
+    if (handnum >= 0 && handnum < 2) {
+        g_vrScopeGunMtxValid[handnum] = false;
+    }
 
     weapondef = weaponFindById(weaponnum);
 
@@ -11289,6 +11289,17 @@ void bgun0f0a5550(s32 handnum) {
             sp2c4.m[3][2] -= sp2c4.m[0][2] * -3.00f + sp2c4.m[1][2] * 0.00f + sp2c4.m[2][2] * -15.00f;
         }
 
+        if (handnum >= 0 && handnum < 2) {
+            f32 invScale = (bg_scale != 0.0f && bg_scale != 1.0f) ? (1.0f / bg_scale) : 1.0f;
+            s32 r, c;
+            mtx4Copy(&sp2c4, &g_vrScopeGunMtx[handnum]);
+            for (r = 0; r < 4; r++) {
+                for (c = 0; c < 3; c++) {
+                    g_vrScopeGunMtx[handnum].m[r][c] *= invScale;
+                }
+            }
+            g_vrScopeGunMtxValid[handnum] = true;
+        }
 
         mtx00015f04(0.10000001f, &sp2c4);
         mtx4Copy(&sp2c4, (Mtxf *) mtxallocation);
@@ -11605,14 +11616,15 @@ void bgun0f0a5550(s32 handnum) {
             }
 
             if (node) {
+                f32 invBgScale = (bg_scale != 0.0f && bg_scale != 1.0f) ? (1.0f / bg_scale) : 1.0f;
                 sp6c = modelFindNodeMtxIndex(node, 0);
 
                 mtx = (Mtxf *) mtxallocation;
                 mtx += sp6c;
 
-                hand->muzzlepos.f[0] = mtx->m[3][0];
-                hand->muzzlepos.f[1] = mtx->m[3][1];
-                hand->muzzlepos.f[2] = mtx->m[3][2];
+                hand->muzzlepos.f[0] = mtx->m[3][0] * invBgScale;
+                hand->muzzlepos.f[1] = mtx->m[3][1] * invBgScale;
+                hand->muzzlepos.f[2] = mtx->m[3][2] * invBgScale;
 
                 mtx4Copy(mtx, &hand->muzzlemat);
                 mtx4TransformVecInPlace(camGetProjectionMtxF(), &hand->muzzlepos);
@@ -11630,14 +11642,15 @@ void bgun0f0a5550(s32 handnum) {
                        || weaponnum == WEAPON_REMOTEMINE
                        || weaponnum == WEAPON_PROXIMITYMINE
                        || weaponnum == WEAPON_NBOMB) {
+                f32 invBgScale = (bg_scale != 0.0f && bg_scale != 1.0f) ? (1.0f / bg_scale) : 1.0f;
                 sp6c = modelFindNodeMtxIndex(modelGetPart(modeldef, MODELPART_GUN_HOLDPOS), 0);
 
                 mtx = (Mtxf *) mtxallocation;
                 mtx += sp6c;
 
-                hand->muzzlepos.x = mtx->m[3][0];
-                hand->muzzlepos.y = mtx->m[3][1];
-                hand->muzzlepos.z = mtx->m[3][2];
+                hand->muzzlepos.x = mtx->m[3][0] * invBgScale;
+                hand->muzzlepos.y = mtx->m[3][1] * invBgScale;
+                hand->muzzlepos.z = mtx->m[3][2] * invBgScale;
 
                 mtx4Copy(mtx, &hand->muzzlemat);
                 mtx4TransformVecInPlace(camGetProjectionMtxF(), &hand->muzzlepos);
@@ -17901,4 +17914,422 @@ void bgun0f0abd30(s32 handnum)
 
         gunctrl->lastmag = false;
     }
+}
+
+/* ==========================================================================
+ * 3D VR Weapon Scope System (ported from GoldenEye VR)
+ * Excludes WEAPON_FARSIGHT and WEAPON_HORIZONSCANNER per design.
+ * ========================================================================== */
+
+GevrScopeState gevrScope[2];
+s32 gevrScopeOn = 0;
+s32 gevrScopeHand[2] = { 0, 0 };
+
+/* Runtime trim in meters: [0]=right, [1]=up, [2]=back(+eye), [3]=size delta */
+static f32 s_vrScopeTrim[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+/*
+ * Configuration de la lunette 3D VR par arme (1 unité = 1 mm sur le modèle 3D) :
+ * - weapon         : ID de l'arme (ex: WEAPON_SNIPERRIFLE)
+ * - x              : Décalage latéral (Gauche / Droite).
+ *                    En mode droitier, augmenter x déplace le cercle vers la GAUCHE de l'arme,
+ *                    diminuer x (ou valeur négative) le déplace vers la DROITE.
+ * - y              : Hauteur (Haut / Bas).
+ *                    Augmenter y monte le cercle vers le HAUT, diminuer y le descend vers le BAS.
+ * - z              : Profondeur le long du canon (Avant / Arrière).
+ *                    Une valeur plus négative (ex: -130.0f) rapproche le cercle vers l'OEIL (arrière de l'arme),
+ *                    une valeur moins négative ou positive (ex: -20.0f) l'éloigne vers le CANON (avant de l'arme).
+ * - r              : Rayon du cercle de la lunette.
+ *                    Augmenter r agrandit la taille du cercle, diminuer r le réduit.
+ * - followLockon   : Si true, le réticule interne suit la cible verrouillée.
+ * - defaultZoomFov : Niveau de zoom de la lunette (FOV en degrés, base 60° = 1x :
+ *                    30.0f = zoom 2x, 20.0f = zoom 3x, 15.0f = zoom 4x, etc.
+ *                    Plus la valeur est petite, plus le zoom est fort).
+ * - camOffsetY     : Décalage vertical (en mm, même échelle que y) de la caméra qui filme
+ *                    à l'intérieur du scope, sans déplacer le cercle 3D sur l'arme
+ *                    (valeur négative = abaisse le point de vue du scope vers le canon).
+ * - camOffsetX     : Décalage horizontal (en mm, même échelle que x) de la caméra qui filme
+ *                    à l'intérieur du scope, sans déplacer le cercle 3D sur l'arme.
+ */
+struct vrScopeDef {
+    s32 weapon;
+    f32 x;
+    f32 y;
+    f32 z;
+    f32 r;
+    bool followLockon;
+    f32 defaultZoomFov;
+    f32 camOffsetY;
+    f32 camOffsetX;
+};
+
+static struct vrScopeDef s_vrScopes[] = {
+    { WEAPON_SNIPERRIFLE,   68.0f, 232.5f, -37.0f, 17.0f, false, 15.0f, -128.0f, -6.0f },
+    { WEAPON_FALCON2_SCOPE, -18.0f, 106.0f, 44.0f, 10.0f, false, 30.0f, -45.0f,  0.0f },
+    { WEAPON_MAGSEC4,         3.0f, 85.0f, 164.0f, 11.0f, false, 30.0f, -30.0f,  0.0f },
+    { WEAPON_LAPTOPGUN,      22.0f, 89.0f, 149.0f, 18.0f, false, 30.0f, -56.0f, -2.0f },
+    { WEAPON_DRAGON,        34.0f, 215.0f, -81.0f, 18.0f, false, 30.0f, -66.0f, 10.0f },
+    { WEAPON_SUPERDRAGON,    33.0f, 215.0f, -82.0f, 18.0f, false, 30.0f, -66.0f, 11.0f },
+    { WEAPON_K7AVENGER,     -48.0f, 169.0f, -157.0f, 18.0f, false, 20.0f, -58.0f, 0.0f },
+    { WEAPON_AR34,          18.5f, 184.0f, -84.0f, 16.0f, false, 15.0f, -111.0f, 7.0f },
+    { WEAPON_KF7SPECIAL,     0.0f, 105.0f, 127.0f, 16.0f, false, 30.0f, -131.0f, -16.0f },
+    { WEAPON_AR53,          0.5f, 129.0f, -5.0f, 16.0f, false, 20.0f, -106.0f, -8.0f },
+};
+
+extern float vr_world_scale;
+
+/*
+static const char *vrScopeWeaponName(s32 weaponnum)
+{
+    switch (weaponnum) {
+        case WEAPON_SNIPERRIFLE:   return "WEAPON_SNIPERRIFLE";
+        case WEAPON_FALCON2_SCOPE: return "WEAPON_FALCON2_SCOPE";
+        case WEAPON_MAGSEC4:       return "WEAPON_MAGSEC4";
+        case WEAPON_LAPTOPGUN:     return "WEAPON_LAPTOPGUN";
+        case WEAPON_DRAGON:        return "WEAPON_DRAGON";
+        case WEAPON_SUPERDRAGON:   return "WEAPON_SUPERDRAGON";
+        case WEAPON_K7AVENGER:     return "WEAPON_K7AVENGER";
+        case WEAPON_AR34:          return "WEAPON_AR34";
+        case WEAPON_AR53:          return "WEAPON_AR53";
+        case WEAPON_KF7SPECIAL:    return "WEAPON_KF7SPECIAL";
+        default:                   return "WEAPON_UNKNOWN";
+    }
+}
+*/
+
+/* Temporary in-game keyboard tuning for scope position (x, y, z), radius (r), camOffsetY, and camOffsetX (commented out)
+static void vrScopeKeyboardTune(struct vrScopeDef *sc)
+{
+    static u32 s_lastTuneTick = 0;
+    static bool s_wasAnyPressed = false;
+    const Uint8 *keys = SDL_GetKeyboardState(NULL);
+    u32 now;
+    bool left, right, up, down, zFwd, zBack, rPlus, rMinus, camYPlus, camYMinus, camXPlus, camXMinus, any;
+    f32 step, rstep;
+
+    if (!keys || !sc) {
+        return;
+    }
+
+    left      = keys[SDL_SCANCODE_LEFT] != 0;
+    right     = keys[SDL_SCANCODE_RIGHT] != 0;
+    up        = keys[SDL_SCANCODE_UP] != 0;
+    down      = keys[SDL_SCANCODE_DOWN] != 0;
+    zFwd      = (keys[SDL_SCANCODE_PAGEUP] != 0)   || (keys[SDL_SCANCODE_KP_8] != 0);
+    zBack     = (keys[SDL_SCANCODE_PAGEDOWN] != 0) || (keys[SDL_SCANCODE_KP_2] != 0);
+    rPlus     = (keys[SDL_SCANCODE_KP_PLUS] != 0)  || (keys[SDL_SCANCODE_P] != 0);
+    rMinus    = (keys[SDL_SCANCODE_KP_MINUS] != 0) || (keys[SDL_SCANCODE_O] != 0);
+    camYPlus  = (keys[SDL_SCANCODE_HOME] != 0)     || (keys[SDL_SCANCODE_U] != 0) || (keys[SDL_SCANCODE_KP_9] != 0);
+    camYMinus = (keys[SDL_SCANCODE_END] != 0)      || (keys[SDL_SCANCODE_I] != 0) || (keys[SDL_SCANCODE_KP_3] != 0);
+    camXPlus  = (keys[SDL_SCANCODE_J] != 0)        || (keys[SDL_SCANCODE_KP_4] != 0);
+    camXMinus = (keys[SDL_SCANCODE_K] != 0)        || (keys[SDL_SCANCODE_KP_6] != 0);
+
+    any = left || right || up || down || zFwd || zBack || rPlus || rMinus || camYPlus || camYMinus || camXPlus || camXMinus;
+    if (!any) {
+        s_wasAnyPressed = false;
+        return;
+    }
+
+    now = SDL_GetTicks();
+    if (s_wasAnyPressed && (now - s_lastTuneTick) < 80) {
+        return;
+    }
+    s_wasAnyPressed = true;
+    s_lastTuneTick = now;
+
+    if (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]) {
+        step  = 0.2f;
+        rstep = 0.1f;
+    } else if (keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_RCTRL]) {
+        step  = 5.0f;
+        rstep = 2.0f;
+    } else {
+        step  = 1.0f;
+        rstep = 0.5f;
+    }
+
+    if (left)      sc->x += step;
+    if (right)     sc->x -= step;
+    if (up)        sc->y += step;
+    if (down)      sc->y -= step;
+    if (zFwd)      sc->z += step;
+    if (zBack)     sc->z -= step;
+    if (rPlus)     sc->r += rstep;
+    if (rMinus) {
+        sc->r -= rstep;
+        if (sc->r < 1.0f) sc->r = 1.0f;
+    }
+    if (camYPlus)  sc->camOffsetY += step;
+    if (camYMinus) sc->camOffsetY -= step;
+    if (camXPlus)  sc->camOffsetX += step;
+    if (camXMinus) sc->camOffsetX -= step;
+
+    vr_log("[VR_SCOPE] { %s, %.1ff, %.1ff, %.1ff, %.1ff, %s, %.1ff, %.1ff, %.1ff },",
+           vrScopeWeaponName(sc->weapon),
+           sc->x, sc->y, sc->z, sc->r,
+           sc->followLockon ? "true" : "false",
+           sc->defaultZoomFov, sc->camOffsetY, sc->camOffsetX);
+}
+*/
+
+static struct vrScopeDef *vrFindScope(s32 weaponnum)
+{
+    s32 i;
+
+    /* Explicitly exclude FarSight XR-20 and Horizon Scanner */
+    if (weaponnum == WEAPON_FARSIGHT || weaponnum == WEAPON_HORIZONSCANNER) {
+        return NULL;
+    }
+
+    for (i = 0; i < (s32)(sizeof(s_vrScopes) / sizeof(s_vrScopes[0])); i++) {
+        if (s_vrScopes[i].weapon == weaponnum) {
+            return &s_vrScopes[i];
+        }
+    }
+    return NULL;
+}
+
+bool vrScopeForWeapon(s32 weaponnum)
+{
+    return vrFindScope(weaponnum) != NULL;
+}
+
+void vrScopeBegin(void)
+{
+    s32 h;
+
+    gevrScopeOn = 0;
+    gevrScopeHand[0] = 0;
+    gevrScopeHand[1] = 0;
+
+    if (!g_Vars.currentplayer
+        || g_Vars.currentplayer->activemenumode != AMMODE_CLOSED
+        || g_Vars.currentplayer->gunctrl.passivemode
+        || g_Vars.currentplayer->bondhealth <= 0.0f) {
+        return;
+    }
+
+    for (h = 0; h < 2; h++) {
+        GevrScopeState *st = &gevrScope[h];
+        struct hand *hand = &g_Vars.currentplayer->hands[h];
+        s32 weaponnum = hand->gset.weaponnum;
+        struct vrScopeDef *sc = vrFindScope(weaponnum);
+        s32 handToMirror;
+        bool isMirrored;
+        f32 bg_scale, worldScale, cmToStereoM, mmToStereoM;
+        f32 headFovY, headAspect;
+        f32 zoomFov, s, zn, zf, nf, rlen, udot;
+        f32 f[3], u[3], r[3], o[3];
+        s32 i;
+
+        st->gunValid = 0;
+
+        {
+            bool alwaysOn = (weaponnum == WEAPON_FALCON2_SCOPE || weaponnum == WEAPON_SNIPERRIFLE);
+            bool gripHeld = (h == HAND_RIGHT) ? (vr_button_R_grip != 0) : (vr_button_L_grip != 0);
+
+            /* Do not display scope while weapon is being switched, unequipped, raised, deployed, or reloaded */
+            if (hand->state == HANDSTATE_CHANGEGUN
+                || hand->state == HANDSTATE_AUTOSWITCH
+                || hand->state == HANDSTATE_RELOAD
+                || VrInReloadLoop
+                || hand->mode == HANDMODE_EQUIP
+                || g_Vars.currentplayer->gunctrl.switchtoweaponnum != -1
+                || g_Vars.currentplayer->gunctrl.gunmemnew >= 0
+                || !bgunIsLoaded()
+                || !g_vrScopeGunMtxValid[h]) {
+                continue;
+            }
+
+            if (!sc || !hand->inuse || !hand->visible || (!alwaysOn && !gripHeld)) {
+                continue;
+            }
+        }
+
+        /*
+        if (h == HAND_RIGHT) {
+            vrScopeKeyboardTune(sc);
+        }
+        */
+
+        handToMirror = VrLeftHandedMode ? HAND_RIGHT : HAND_LEFT;
+        isMirrored = ((weaponHasFlag(weaponnum, WEAPONFLAG_DUALFLIP) || weaponnum == WEAPON_UNARMED) && h == handToMirror)
+                  || (!weaponHasFlag(weaponnum, WEAPONFLAG_DUALFLIP) && weaponnum != WEAPON_UNARMED && VrLeftHandedMode);
+
+        /* Match the exact stereo world scale used by the game's VR shader:
+         * in vr_get_eye_view_offset(), out_tx = localEyeX * vr_world_scale,
+         * and in bgun0f0a5550(), the weapon matrix is scaled by bg_scale.
+         * Therefore 1 stereo meter in viewSpace = (vr_world_scale / bg_scale) cm-units. */
+        bg_scale = bgGetScaleBg2Gfx();
+        if (bg_scale <= 0.0001f) {
+            bg_scale = 1.0f;
+        }
+        worldScale = (vr_world_scale > 0.0001f) ? vr_world_scale : (85.0f * bg_scale);
+        cmToStereoM = bg_scale / worldScale;
+        mmToStereoM = 0.1f * cmToStereoM;
+
+        /* Extract weapon pose in viewSpace (stereo meters) from the final rendered weapon matrix:
+         * gunMtx->m[0] = gun left (or right when mirrored), gunMtx->m[1] = gun up,
+         * gunMtx->m[2] = gun forward, gunMtx->m[3] = gun origin in viewSpace (cm). */
+        {
+            const Mtxf *gunMtx = g_vrScopeGunMtxValid[h] ? &g_vrScopeGunMtx[h] : &hand->cammtx;
+            f32 mirrorSign = (g_vrScopeGunMtxValid[h] && isMirrored) ? 1.0f : -1.0f;
+
+            for (i = 0; i < 3; i++) {
+                f32 posCm = gunMtx->m[3][i];
+                if (!g_vrScopeGunMtxValid[h] && weaponnum == WEAPON_K7AVENGER) {
+                    posCm -= (gunMtx->m[0][i] * -3.0f + gunMtx->m[2][i] * -15.0f);
+                }
+                st->gunOrigin[i]  = posCm * cmToStereoM;
+                st->gunAxes[0][i] = mirrorSign * gunMtx->m[0][i]; /* right (+X of quad) */
+                st->gunAxes[1][i] = gunMtx->m[1][i];              /* up (+Y of quad) */
+                st->gunAxes[2][i] = -gunMtx->m[2][i];             /* back (+Z toward player's eye) */
+            }
+
+            st->lens[0] = (isMirrored ? 1.0f : -1.0f) * sc->x * mmToStereoM + s_vrScopeTrim[0];
+            st->lens[1] = sc->y * mmToStereoM + s_vrScopeTrim[1];
+            st->lens[2] = -sc->z * mmToStereoM + s_vrScopeTrim[2];
+            st->lens[3] = 2.0f * sc->r * mmToStereoM * 2.0f + s_vrScopeTrim[3];
+            st->gunValid = 1;
+
+            /* Fixed scope zoom FOV per weapon, except Sniper Rifle which has adjustable zoom */
+            if (weaponnum == WEAPON_SNIPERRIFLE) {
+                zoomFov = currentPlayerGetGunZoomFov();
+                if (zoomFov <= 0.0f) {
+                    zoomFov = sc->defaultZoomFov;
+                }
+            } else {
+                zoomFov = sc->defaultZoomFov;
+            }
+            if (zoomFov > 60.0f) {
+                zoomFov = 60.0f;
+            }
+            if (st->lensTan > 1e-3f) {
+                f32 t = st->lensTan * tanf(zoomFov * 0.5f * (3.14159265f / 180.0f))
+                        / tanf(60.0f * 0.5f * (3.14159265f / 180.0f));
+                zoomFov = 2.0f * atanf(t) * (180.0f / 3.14159265f);
+            }
+            if (zoomFov < 0.5f) {
+                zoomFov = 0.5f;
+            }
+            st->fovDeg = zoomFov;
+
+            {
+                extern s32 g_LookingAtPropHandMask;
+                if (g_Vars.currentplayer->lookingatprop.prop != NULL
+                    && sightIsReactiveToProp(g_Vars.currentplayer->lookingatprop.prop)
+                    && ((g_LookingAtPropHandMask & (1 << h)) != 0 || !g_Vars.currentplayer->hands[HAND_LEFT].inuse)) {
+                    st->crosshairState = 1;
+                    if (sightIsPropFriendly(g_Vars.currentplayer->lookingatprop.prop)) {
+                        st->crosshairColor = 0x0040ffdfU;
+                    } else {
+                        st->crosshairColor = 0xff0000dfU;
+                    }
+                } else {
+                    st->crosshairState = 0;
+                    st->crosshairColor = (PLAYER_EXTCFG().crosshaircolour & 0xffffff00U) | 0xb0U;
+                }
+            }
+
+            headFovY = (g_Vars.currentplayer->fovy > 1.0f) ? g_Vars.currentplayer->fovy : 60.0f;
+            headAspect = (g_Vars.currentplayer->aspect > 0.01f) ? g_Vars.currentplayer->aspect : 1.0f;
+            st->headP[1] = 1.0f / tanf(headFovY * 0.5f * (3.14159265f / 180.0f));
+            st->headP[0] = st->headP[1] / headAspect;
+
+            {
+                f32 camLensX = st->lens[0] + (isMirrored ? 1.0f : -1.0f) * sc->camOffsetX * mmToStereoM;
+                f32 camLensY = st->lens[1] + sc->camOffsetY * mmToStereoM;
+                for (i = 0; i < 3; i++) {
+                    f[i] = gunMtx->m[2][i]; /* unit barrel forward in camera space */
+                    u[i] = gunMtx->m[1][i]; /* unit gun up in camera space */
+                    o[i] = (st->gunOrigin[i]
+                          + st->gunAxes[0][i] * camLensX
+                          + st->gunAxes[1][i] * camLensY
+                          + st->gunAxes[2][i] * st->lens[2]) * worldScale;
+                    st->origin[i] = o[i];
+                }
+            }
+        }
+
+        /* r = normalize(f x u), u = r x f */
+        r[0] = f[1] * u[2] - f[2] * u[1];
+        r[1] = f[2] * u[0] - f[0] * u[2];
+        r[2] = f[0] * u[1] - f[1] * u[0];
+        rlen = sqrtf(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+        if (rlen > 1e-5f) {
+            r[0] /= rlen;
+            r[1] /= rlen;
+            r[2] /= rlen;
+        }
+        u[0] = r[1] * f[2] - r[2] * f[1];
+        u[1] = r[2] * f[0] - r[0] * f[2];
+        u[2] = r[0] * f[1] - r[1] * f[0];
+
+        /* Ensure scope +Y stays right-side-up in camera space */
+        udot = u[0] * hand->cammtx.m[1][0] + u[1] * hand->cammtx.m[1][1] + u[2] * hand->cammtx.m[1][2];
+        if (udot < 0.0f) {
+            r[0] = -r[0]; r[1] = -r[1]; r[2] = -r[2];
+            u[0] = -u[0]; u[1] = -u[1]; u[2] = -u[2];
+        }
+
+        /* Column-major VP = P_scope * V_scope */
+        s = 1.0f / tanf(zoomFov * 0.5f * (3.14159265f / 180.0f));
+        zn = 10.0f;
+        zf = 30000.0f;
+        nf = 1.0f / (zn - zf);
+
+        st->vp[0]  = s * r[0];
+        st->vp[1]  = s * u[0];
+        st->vp[2]  = (zf + zn) * nf * (-f[0]);
+        st->vp[3]  = f[0];
+
+        st->vp[4]  = s * r[1];
+        st->vp[5]  = s * u[1];
+        st->vp[6]  = (zf + zn) * nf * (-f[1]);
+        st->vp[7]  = f[1];
+
+        st->vp[8]  = s * r[2];
+        st->vp[9]  = s * u[2];
+        st->vp[10] = (zf + zn) * nf * (-f[2]);
+        st->vp[11] = f[2];
+
+        {
+            f32 tx = -(r[0] * o[0] + r[1] * o[1] + r[2] * o[2]);
+            f32 ty = -(u[0] * o[0] + u[1] * o[1] + u[2] * o[2]);
+            f32 tz = -(-f[0] * o[0] - f[1] * o[1] - f[2] * o[2]);
+            st->vp[12] = s * tx;
+            st->vp[13] = s * ty;
+            st->vp[14] = (zf + zn) * nf * tz + 2.0f * zf * zn * nf;
+            st->vp[15] = -tz;
+        }
+
+        gevrScopeHand[h] = 1;
+        gevrScopeOn |= (1 << h);
+    }
+}
+
+Gfx *vrScopeDrawReticle(Gfx *gdl, s32 hand)
+{
+    s32 cx = SCREEN_WIDTH_LO / 2;
+    s32 cy = SCREEN_HEIGHT_LO / 2;
+    s32 gap = 4, outer = 90;
+    (void)hand;
+
+    gDPPipeSync(gdl++);
+    gDPSetCycleType(gdl++, G_CYC_1CYCLE);
+    gDPSetRenderMode(gdl++, G_RM_XLU_SURF, G_RM_XLU_SURF2);
+    gDPSetCombineMode(gdl++, G_CC_PRIMITIVE, G_CC_PRIMITIVE);
+    gDPSetPrimColor(gdl++, 0, 0, 220, 0, 0, 220);
+
+    /* Horizontal hair (left and right of center gap) */
+    gDPFillRectangle(gdl++, cx - outer, cy, cx - gap, cy + 1);
+    gDPFillRectangle(gdl++, cx + gap + 1, cy, cx + outer + 1, cy + 1);
+    /* Vertical hair (top and bottom of center gap) */
+    gDPFillRectangle(gdl++, cx, cy - outer, cx + 1, cy - gap);
+    gDPFillRectangle(gdl++, cx, cy + gap + 1, cx + 1, cy + outer + 1);
+    /* Center dot */
+    gDPSetPrimColor(gdl++, 0, 0, 255, 40, 40, 255);
+    gDPFillRectangle(gdl++, cx, cy, cx + 1, cy + 1);
+
+    return gdl;
 }

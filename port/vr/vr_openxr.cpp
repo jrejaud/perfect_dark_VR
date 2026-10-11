@@ -63,6 +63,7 @@
 #include "vr_input.h"
 #include "vr_log.h"
 #include "vr_hub.h"
+#include "../include/vr_scope.h"
 
 extern "C" struct GfxRenderingAPI* gfx_get_current_rendering_api(void);
 
@@ -227,6 +228,10 @@ static uint32_t g_menuSwapchainHeight = 0;
 extern GLuint gfx_opengl_get_vr_menu_texture(void);  // Left-hand HUD texture
 extern GLuint gfx_opengl_get_vr_menu_texture_R(void);// Right-hand HUD texture
 extern GLuint gfx_opengl_get_vr_menu_texture_H(void);// Head HUD texture
+extern GLuint gfx_vr_scope_texture(int hand);        // a hand's scope image: HAND_RIGHT 0, HAND_LEFT 1
+#define GEVR_SCOPE_RES 512                           // gfx_opengl.cpp's scope target
+#define GEVR_SCOPE_MIN_DEPTH_M 0.12f                 // the lens's nearest edge stays this far ahead of the eyes
+#define GEVR_SCOPE_TURN_M 0.08f                      // ... and turns toward them within this of it
 extern bool is_weapon_hud;
 float VrHudDistance = 0.8f;
 
@@ -234,15 +239,18 @@ float VrHudDistance = 0.8f;
 static XrSwapchain g_menuSwapchain  = XR_NULL_HANDLE; // Left-hand HUD
 static XrSwapchain g_menuSwapchainR = XR_NULL_HANDLE; // Right-hand HUD
 static XrSwapchain g_menuSwapchainH = XR_NULL_HANDLE; // Head-locked HUD
+static XrSwapchain g_scopeSwapchain[2] = { XR_NULL_HANDLE, XR_NULL_HANDLE }; // [0] right hand, [1] left hand
 
 #ifdef ANDROID
 static std::vector<XrSwapchainImageOpenGLESKHR> g_menuSwapchainImages;
 static std::vector<XrSwapchainImageOpenGLESKHR> g_menuSwapchainImagesR;
 static std::vector<XrSwapchainImageOpenGLESKHR> g_menuSwapchainImagesH;
+static std::vector<XrSwapchainImageOpenGLESKHR> g_scopeSwapchainImages[2];
 #else
 static std::vector<XrSwapchainImageOpenGLKHR> g_menuSwapchainImages;
 static std::vector<XrSwapchainImageOpenGLKHR> g_menuSwapchainImagesR;
 static std::vector<XrSwapchainImageOpenGLKHR> g_menuSwapchainImagesH;
+static std::vector<XrSwapchainImageOpenGLKHR> g_scopeSwapchainImages[2];
 #endif
 
 // ============================================================================
@@ -256,6 +264,20 @@ static bool g_lastSubmitMenuR = false;
 static bool g_lastSubmitMenuH = false;
 static std::array<XrView, 2> g_lastViews{};
 extern "C" int gfx_sdl_get_mirror_eye();
+
+static XrCompositionLayerQuad g_lastScopeLayer[2] = {
+    {XR_TYPE_COMPOSITION_LAYER_QUAD},
+    {XR_TYPE_COMPOSITION_LAYER_QUAD}
+};
+static bool g_lastSubmitScope[2] = { false, false };
+static GLuint s_scopeProcessedTex[2] = { 0, 0 };
+static GLuint s_scopeProcessedFbo[2] = { 0, 0 };
+
+extern "C" GLuint vr_get_processed_scope_texture(int hand) {
+    if (hand < 0 || hand > 1) return 0;
+    if (s_scopeProcessedTex[hand] != 0) return s_scopeProcessedTex[hand];
+    return gfx_vr_scope_texture(hand);
+}
 
 // ============================================================================
 // HEAD TRACKING - State
@@ -1067,6 +1089,26 @@ static bool vr_create_menu_swapchain()
 
     LOGI("Menu swapchains created L/R/H: %u x %u (format=0x%llx)",
          g_menuSwapchainWidth, g_menuSwapchainHeight, (unsigned long long)chosenFormat);
+
+    // Scope lenses, one per hand: the scope target's size (GEVR_SCOPE_RES x GEVR_SCOPE_RES).
+    swapchainInfo.width  = GEVR_SCOPE_RES;
+    swapchainInfo.height = GEVR_SCOPE_RES;
+    for (int hand = 0; hand < 2; hand++) {
+        if (XR_FAILED(xrCreateSwapchain(g_vrState.session, &swapchainInfo, &g_scopeSwapchain[hand]))) {
+            LOGE("xrCreateSwapchain (scope, hand %d) failed (format=0x%llx)", hand, (unsigned long long)chosenFormat);
+            g_scopeSwapchain[hand] = XR_NULL_HANDLE;
+        } else {
+            imageCount = 0;
+            xrEnumerateSwapchainImages(g_scopeSwapchain[hand], 0, &imageCount, nullptr);
+#ifdef ANDROID
+            g_scopeSwapchainImages[hand].resize(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
+#else
+            g_scopeSwapchainImages[hand].resize(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR});
+#endif
+            xrEnumerateSwapchainImages(g_scopeSwapchain[hand], imageCount, &imageCount,
+                                       reinterpret_cast<XrSwapchainImageBaseHeader*>(g_scopeSwapchainImages[hand].data()));
+        }
+    }
     return true;
 }
 
@@ -1258,6 +1300,190 @@ static void vr_update_menu_swapchain_H()
     xrReleaseSwapchainImage(g_menuSwapchainH, &releaseInfo);
 }
 
+static GLuint s_scopeCopyProg = 0;
+static GLuint s_scopeCopyVao  = 0;
+static GLint  s_scopeCopySrgbLoc   = -1;
+static GLint  s_scopeCopyColorLoc  = -1;
+static GLint  s_scopeCopyLockedLoc = -1;
+static bool   s_scopeCopyFailed = false;
+
+static bool vr_scope_copy_init()
+{
+    if (s_scopeCopyProg) return true;
+    if (s_scopeCopyFailed) return false;
+
+    static const char* vsSrc =
+            "#version 300 es\n"
+            "const vec2 pos[3] = vec2[3](vec2(-1.0,-1.0), vec2(3.0,-1.0), vec2(-1.0,3.0));\n"
+            "void main() { gl_Position = vec4(pos[gl_VertexID], 0.0, 1.0); }\n";
+    static const char* fsSrc =
+            "#version 300 es\n"
+            "precision highp float;\n"
+            "uniform sampler2D uTex;\n"
+            "uniform int uSrgb;\n"
+            "uniform vec4 uReticleColor;\n"
+            "uniform int uReticleLocked;\n"
+            "out vec4 o;\n"
+            "void main() {\n"
+            "    const float size = 512.0;\n"
+            "    vec2 uv = gl_FragCoord.xy / size;\n"
+            "    vec2 p = uv * 2.0 - 1.0;\n"
+            "    float r = length(p);\n"
+            "    float px = 2.0 / size;\n"
+            "    float a = 1.0 - smoothstep(1.0 - 2.0 * px, 1.0, r);\n"
+            "    if (a <= 0.0) { o = vec4(0.0); return; }\n"
+            "    vec3 c = texture(uTex, uv).rgb;\n"
+            "    c *= 1.0 - 0.6 * smoothstep(0.9, 1.0, r);\n"
+            "    vec2 d = abs(gl_FragCoord.xy - vec2(size * 0.5));\n"
+            "    const float halfW = 2.5;\n"
+            "    const float p1 = 7.0;\n"
+            "    const float p2 = 22.0;\n"
+            "    const float p3 = 36.0;\n"
+            "    bool onCrossInner = (d.x <= halfW && d.y >= p1 && d.y <= p2)\n"
+            "                     || (d.y <= halfW && d.x >= p1 && d.x <= p2);\n"
+            "    bool onCrossOuter = (d.x <= halfW && d.y > p2 && d.y <= p3)\n"
+            "                     || (d.y <= halfW && d.x > p2 && d.x <= p3);\n"
+            "    if (onCrossInner) {\n"
+            "        c = mix(c, uReticleColor.rgb, 0.95);\n"
+            "    } else if (onCrossOuter) {\n"
+            "        c = mix(c, uReticleColor.rgb, 0.75);\n"
+            "    }\n"
+            "    if (uSrgb == 1) c = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));\n"
+            "    o = vec4(c * a, a);\n"
+            "}\n";
+
+    auto compile = [](GLenum type, const char* src) -> GLuint {
+        GLuint s = glCreateShader(type);
+        glShaderSource(s, 1, &src, nullptr);
+        glCompileShader(s);
+        GLint ok = 0; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            char log[512]; glGetShaderInfoLog(s, sizeof(log), nullptr, log);
+            LOGE("scope copy shader compile error: %s", log);
+            glDeleteShader(s); return 0;
+        }
+        return s;
+    };
+
+    GLuint vs = compile(GL_VERTEX_SHADER, vsSrc);
+    GLuint fs = compile(GL_FRAGMENT_SHADER, fsSrc);
+    if (!vs || !fs) { s_scopeCopyFailed = true; return false; }
+
+    GLuint p = glCreateProgram();
+    glAttachShader(p, vs); glAttachShader(p, fs);
+    glLinkProgram(p);
+    glDeleteShader(vs); glDeleteShader(fs);
+    GLint ok = 0; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    if (!ok) { LOGE("scope copy program link failed"); glDeleteProgram(p); s_scopeCopyFailed = true; return false; }
+
+    GLint prevProg = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
+    glUseProgram(p);
+    glUniform1i(glGetUniformLocation(p, "uTex"), 0);
+    glUseProgram((GLuint)prevProg);
+    s_scopeCopySrgbLoc   = glGetUniformLocation(p, "uSrgb");
+    s_scopeCopyColorLoc  = glGetUniformLocation(p, "uReticleColor");
+    s_scopeCopyLockedLoc = glGetUniformLocation(p, "uReticleLocked");
+    if (!s_scopeCopyVao) glGenVertexArrays(1, &s_scopeCopyVao);
+    s_scopeCopyProg = p;
+    return true;
+}
+
+static void vr_update_scope_swapchain(int hand, GLuint srcTex)
+{
+    if (hand < 0 || hand > 1 || !srcTex) return;
+
+    if (!s_scopeProcessedTex[hand]) {
+        glGenTextures(1, &s_scopeProcessedTex[hand]);
+        glBindTexture(GL_TEXTURE_2D, s_scopeProcessedTex[hand]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, GEVR_SCOPE_RES, GEVR_SCOPE_RES, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenFramebuffers(1, &s_scopeProcessedFbo[hand]);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_scopeProcessedFbo[hand]);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_scopeProcessedTex[hand], 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    if (vr_scope_copy_init()) {
+        GLint prevProg = 0, prevVao = 0, prevTex = 0, prevActive = 0, vp[4], prevFbo = 0;
+        GLboolean prevBlend   = glIsEnabled(GL_BLEND);
+        GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+        GLboolean prevDepth   = glIsEnabled(GL_DEPTH_TEST);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+        glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActive);
+        glActiveTexture(GL_TEXTURE0);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
+        glGetIntegerv(GL_VIEWPORT, vp);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, s_scopeProcessedFbo[hand]);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glViewport(0, 0, GEVR_SCOPE_RES, GEVR_SCOPE_RES);
+
+        glUseProgram(s_scopeCopyProg);
+#ifdef ANDROID
+        glUniform1i(s_scopeCopySrgbLoc, g_menuSwapchainIsSrgb ? 1 : 0);
+#else
+        glUniform1i(s_scopeCopySrgbLoc, 0);
+#endif
+        unsigned int col = gevrScope[hand].crosshairColor;
+        if (col == 0) col = 0x00ff00b0U;
+        glUniform4f(s_scopeCopyColorLoc,
+                    ((col >> 24) & 0xff) / 255.0f,
+                    ((col >> 16) & 0xff) / 255.0f,
+                    ((col >> 8)  & 0xff) / 255.0f,
+                    (col         & 0xff) / 255.0f);
+        glUniform1i(s_scopeCopyLockedLoc, gevrScope[hand].crosshairState);
+        if (!s_scopeCopyVao) glGenVertexArrays(1, &s_scopeCopyVao);
+        glBindVertexArray(s_scopeCopyVao);
+        glBindTexture(GL_TEXTURE_2D, srcTex);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        if (g_scopeSwapchain[hand] != XR_NULL_HANDLE) {
+            uint32_t imageIndex = 0;
+            XrSwapchainImageAcquireInfo acquireInfo = {XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+            if (XR_SUCCEEDED(xrAcquireSwapchainImage(g_scopeSwapchain[hand], &acquireInfo, &imageIndex))) {
+                XrSwapchainImageWaitInfo waitInfo = {XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+                waitInfo.timeout = XR_INFINITE_DURATION;
+                xrWaitSwapchainImage(g_scopeSwapchain[hand], &waitInfo);
+
+                static GLuint dstFbo = 0;
+                if (!dstFbo) glGenFramebuffers(1, &dstFbo);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dstFbo);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                       g_scopeSwapchainImages[hand][imageIndex].image, 0);
+
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, s_scopeProcessedFbo[hand]);
+                glBlitFramebuffer(0, 0, GEVR_SCOPE_RES, GEVR_SCOPE_RES,
+                                  0, 0, GEVR_SCOPE_RES, GEVR_SCOPE_RES,
+                                  GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                XrSwapchainImageReleaseInfo releaseInfo = {XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+                xrReleaseSwapchainImage(g_scopeSwapchain[hand], &releaseInfo);
+            }
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
+        glActiveTexture((GLenum)prevActive);
+        glBindVertexArray((GLuint)prevVao);
+        glUseProgram((GLuint)prevProg);
+        glViewport(vp[0], vp[1], vp[2], vp[3]);
+        if (prevBlend)   glEnable(GL_BLEND);        else glDisable(GL_BLEND);
+        if (prevScissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+        if (prevDepth)   glEnable(GL_DEPTH_TEST);   else glDisable(GL_DEPTH_TEST);
+        glFlush();
+    }
+}
+
 // ============================================================================
 // FBOs - Render Targets
 // ============================================================================
@@ -1339,6 +1565,30 @@ static bool vr_ensure_swapchain_images()
 // ============================================================================
 // HEAD TRACKING - Math Helpers
 // ============================================================================
+
+/* the rotation whose columns are x, y, z (an orthonormal right-handed basis) */
+static XrQuaternionf vr_quat_from_basis(const float x[3], const float y[3], const float z[3])
+{
+    const float m00 = x[0], m01 = y[0], m02 = z[0];
+    const float m10 = x[1], m11 = y[1], m12 = z[1];
+    const float m20 = x[2], m21 = y[2], m22 = z[2];
+    const float tr = m00 + m11 + m22;
+    XrQuaternionf q;
+    if (tr > 0.0f) {
+        const float s = sqrtf(tr + 1.0f) * 2.0f;
+        q.w = 0.25f * s; q.x = (m21 - m12) / s; q.y = (m02 - m20) / s; q.z = (m10 - m01) / s;
+    } else if (m00 > m11 && m00 > m22) {
+        const float s = sqrtf(1.0f + m00 - m11 - m22) * 2.0f;
+        q.w = (m21 - m12) / s; q.x = 0.25f * s; q.y = (m01 + m10) / s; q.z = (m02 + m20) / s;
+    } else if (m11 > m22) {
+        const float s = sqrtf(1.0f + m11 - m00 - m22) * 2.0f;
+        q.w = (m02 - m20) / s; q.x = (m01 + m10) / s; q.y = 0.25f * s; q.z = (m12 + m21) / s;
+    } else {
+        const float s = sqrtf(1.0f + m22 - m00 - m11) * 2.0f;
+        q.w = (m10 - m01) / s; q.x = (m02 + m20) / s; q.y = (m12 + m21) / s; q.z = 0.25f * s;
+    }
+    return q;
+}
 
 XrQuaternionf MultiplyQuaternions(XrQuaternionf q1, XrQuaternionf q2) {
     XrQuaternionf result;
@@ -1469,7 +1719,7 @@ static void vr_update_head_tracking(XrTime predictedDisplayTime)
         // --- Grip pressed on either controller ---
         bool gripAny = (vr_button_R_grip != 0) || (vr_button_L_grip != 0);
 
-        if (gripAny && WepCanZoom) {
+        if (gripAny && WepCanZoom && !gevrScopeOn) {
             // Initialize the buffer on the first frame with grip
             if (!sSmoothedHeadInit) {
                 sSmoothedHeadPos[0] = rawHead.x;
@@ -1673,6 +1923,61 @@ extern "C" int vrGetMenuMirrorMVPList(int eyeIndex, VrMirrorMenuEntry* outEntrie
 
     return count;
 }
+
+struct VrMirrorScopeEntry {
+    GLuint tex;
+    float mvp[16];
+};
+
+extern "C" int vrGetScopeMirrorMVPList(int eyeIndex, VrMirrorScopeEntry* outEntries) {
+    int count = 0;
+    if (eyeIndex < 0 || eyeIndex > 1) return 0;
+    const XrView& view = (g_lastViews[eyeIndex].fov.angleRight != 0.0f) ? g_lastViews[eyeIndex] : g_frameViews[eyeIndex];
+    XrFovf fov = view.fov;
+    if (fov.angleRight <= 0.0f || fov.angleLeft >= 0.0f) {
+        fov.angleLeft = -0.785398f;
+        fov.angleRight = 0.785398f;
+        fov.angleUp = 0.785398f;
+        fov.angleDown = -0.785398f;
+    }
+    float ipd = ipd_meters;
+    if (ipd < 0.01f || ipd > 0.10f) ipd = 0.064f;
+    float localEyeX = (eyeIndex == 0 ? -ipd * 0.5f : ipd * 0.5f);
+
+    for (int hand = 0; hand < 2; hand++) {
+        if (!g_lastSubmitScope[hand]) continue;
+        const XrCompositionLayerQuad* quad = &g_lastScopeLayer[hand];
+        GLuint tex = vr_get_processed_scope_texture(hand);
+        if (!tex) continue;
+
+        float rot[16];
+        QuatToMat4(quad->pose.orientation, rot);
+
+        float model[16];
+        memcpy(model, rot, sizeof(rot));
+        model[12] = quad->pose.position.x - localEyeX;
+        model[13] = quad->pose.position.y;
+        model[14] = quad->pose.position.z;
+
+        model[0] *= quad->size.width;
+        model[1] *= quad->size.width;
+        model[2] *= quad->size.width;
+
+        model[4] *= quad->size.height;
+        model[5] *= quad->size.height;
+        model[6] *= quad->size.height;
+
+        float proj[16];
+        ProjectionFromFov(fov, 0.05f, 100.0f, proj);
+
+        float* outMvp = outEntries[count].mvp;
+        Mat4Mul(proj, model, outMvp);
+
+        outEntries[count].tex = tex;
+        count++;
+    }
+    return count;
+}
 #endif
 
 
@@ -1768,7 +2073,73 @@ static XrCompositionLayerQuad vr_init_menu_quad(XrSwapchain swapchain) {
     return q;
 }
 
+extern "C" void vr_update_scope_layers(void) {
+    g_lastSubmitScope[0] = false;
+    g_lastSubmitScope[1] = false;
+
+    for (int hand = 0; hand < 2; hand++) {
+        const GevrScopeState& sc = gevrScope[hand];
+        XrCompositionLayerQuad& layerQ = g_lastScopeLayer[hand];
+        const GLuint scopeTex = gfx_vr_scope_texture(hand);
+        if (scopeTex != 0 && sc.gunValid) {
+            vr_update_scope_swapchain(hand, scopeTex);
+            const float gp[3] = { sc.gunOrigin[0], sc.gunOrigin[1], sc.gunOrigin[2] };
+            const float rx = sc.gunAxes[0][0], ry = sc.gunAxes[0][1], rz = sc.gunAxes[0][2];
+            const float ux = sc.gunAxes[1][0], uy = sc.gunAxes[1][1], uz = sc.gunAxes[1][2];
+            const float bx = sc.gunAxes[2][0], by = sc.gunAxes[2][1], bz = sc.gunAxes[2][2];
+
+            const float side = sc.lens[0], up = sc.lens[1], back = sc.lens[2];
+            bool lensHidden = false;
+            layerQ.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            layerQ.space = g_vrState.viewSpace;
+            layerQ.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            layerQ.subImage.swapchain = g_scopeSwapchain[hand];
+            layerQ.subImage.imageArrayIndex = 0;
+            layerQ.subImage.imageRect.offset = {0, 0};
+            layerQ.subImage.imageRect.extent = {GEVR_SCOPE_RES, GEVR_SCOPE_RES};
+            const float xrP0 = (g_eyeProjMtx[0][0] + g_eyeProjMtx[1][0]) * 0.5f;
+            const float xrP1 = (g_eyeProjMtx[0][5] + g_eyeProjMtx[1][5]) * 0.5f;
+            const float fovScaleX = (xrP0 > 1e-4f && sc.headP[0] > 1e-4f) ? (sc.headP[0] / xrP0) : 1.0f;
+            const float fovScaleY = (xrP1 > 1e-4f && sc.headP[1] > 1e-4f) ? (sc.headP[1] / xrP1) : 1.0f;
+
+            layerQ.pose.position = { (gp[0] + ux * up + bx * back + rx * side) * fovScaleX,
+                                     (gp[1] + uy * up + by * back + ry * side) * fovScaleY,
+                                     (gp[2] + uz * up + bz * back + rz * side) };
+            const float r_axis[3] = { rx, ry, rz };
+            const float u_axis[3] = { ux, uy, uz };
+            const float b_axis[3] = { bx, by, bz };
+            layerQ.pose.orientation = vr_quat_from_basis(r_axis, u_axis, b_axis);
+            layerQ.size = {sc.lens[3] * fovScaleX, sc.lens[3] * fovScaleY};
+            {
+                XrVector3f c = layerQ.pose.position;
+                const float r = sc.lens[3] * 0.5f;
+                const float cd = sqrtf(c.x * c.x + c.y * c.y + c.z * c.z);
+                gevrScope[hand].lensTan = cd > 0.01f ? r / cd : 0.0f;
+                if (-c.z < 0.02f) {
+                    lensHidden = true;
+                }
+            }
+            g_lastSubmitScope[hand] = !lensHidden;
+        }
+    }
+    glFlush();
+}
+
 static void vr_submit_frame(XrFrameState& frameState, const std::array<XrView, 2>& views) {
+    {
+        /*
+         * Pre-compile the scope's lens shader and render target on the first
+         * frame instead of the moment a scoped weapon is drawn, avoiding any
+         * stutter on weapon switch.
+         */
+        static bool warmed = false;
+        if (!warmed && g_scopeSwapchain[0] != XR_NULL_HANDLE) {
+            extern void gfx_vr_scope_prepare(void);   // gfx_opengl.cpp
+            warmed = true;
+            vr_scope_copy_init();
+            gfx_vr_scope_prepare();
+        }
+    }
     std::array<XrCompositionLayerProjectionView, 2> projViews;
     bool is_mv = gfx_get_current_rendering_api()->is_multiview();
 
@@ -1857,12 +2228,17 @@ static void vr_submit_frame(XrFrameState& frameState, const std::array<XrView, 2
 
     // --- Layer submission ---
     int numLayers = 1;
-    const XrCompositionLayerBaseHeader* layers[4];
+    const XrCompositionLayerBaseHeader* layers[8];
     layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader *>(&layer);
 
     if (submitMenuL) layers[numLayers++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&menuLayerL);
     if (submitMenuR) layers[numLayers++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&menuLayerR);
     if (submitMenuH) layers[numLayers++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&menuLayerH);
+    for (int hand = 0; hand < 2; hand++) {
+        if (g_lastSubmitScope[hand] && g_scopeSwapchain[hand] != XR_NULL_HANDLE) {
+            layers[numLayers++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&g_lastScopeLayer[hand]);
+        }
+    }
 
 #ifndef ANDROID // if PC
     // for miroir PC
@@ -2646,6 +3022,13 @@ extern "C" void vr_shutdown()
         xrDestroySwapchain(g_menuSwapchainH);
         g_menuSwapchainH = XR_NULL_HANDLE;
         g_menuSwapchainImagesH.clear();
+    }
+    for (int hand = 0; hand < 2; hand++) {
+        if (g_scopeSwapchain[hand] != XR_NULL_HANDLE) {
+            xrDestroySwapchain(g_scopeSwapchain[hand]);
+            g_scopeSwapchain[hand] = XR_NULL_HANDLE;
+        }
+        g_scopeSwapchainImages[hand].clear();
     }
 
     // 5. Reference spaces

@@ -88,6 +88,7 @@
 
 #include "../../port/vr/vr_openxr.h"
 #include "../../port/vr/vr_log.h"
+#include "vr_scope.h"
 #include "string.h"
 
 #ifdef ANDROID
@@ -2443,6 +2444,22 @@ void playerUpdateZoom(void)
     else {
         g_Vars.currentplayer->zoomintime = g_Vars.currentplayer->zoomintimemax;
         g_Vars.currentplayer->zoominfovy = g_Vars.currentplayer->zoominfovynew;
+    }
+
+    if (vrScopeForWeapon(g_Vars.currentplayer->hands[HAND_RIGHT].gset.weaponnum)
+        || vrScopeForWeapon(g_Vars.currentplayer->hands[HAND_LEFT].gset.weaponnum)) {
+        fovy = PLAYER_DEFAULT_FOV;
+        playermgrSetFovY(fovy);
+        viSetFovY(fovy);
+
+        if (g_Vars.currentplayer->teleportstate != TELEPORTSTATE_INACTIVE) {
+            fovy = playerGetTeleportFovY();
+            playermgrSetFovY(fovy);
+            viSetFovY(fovy);
+        }
+
+        bgSetScaleBg2Gfx(1.0f);
+        return;
     }
 
     playermgrSetFovY(g_Vars.currentplayer->zoominfovy);
@@ -5113,7 +5130,23 @@ Gfx* playerRenderHud(Gfx* gdl)
 
 
 
+        gDPNoOpTag(gdl++, VR_SCOPE_REC_END);
+
         bgunRender(&gdl);
+
+        vrScopeBegin();
+        {
+            s32 h;
+            for (h = 0; h < 2; h++) {
+                if (gevrScopeHand[h]) {
+                    gDPNoOpTag(gdl++, h == 0 ? VR_SCOPE_ONLY_BEGIN : VR_SCOPE_ONLY_BEGIN_L);
+                    gdl = lasersightRenderBeam(gdl);
+                    gdl = lasersightRenderDot(gdl);
+                    gdl = vrScopeDrawReticle(gdl, h);
+                    gDPNoOpTag(gdl++, VR_SCOPE_ONLY_END);
+                }
+            }
+        }
 
         gdl = lasersightRenderDot(gdl);
 

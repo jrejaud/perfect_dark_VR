@@ -1455,6 +1455,8 @@ void controller_pose() {
                      || weaponnum == WEAPON_SUPERDRAGON
                      || weaponnum == WEAPON_K7AVENGER
                      || weaponnum == WEAPON_AR34
+                     || weaponnum == WEAPON_AR53
+                     || weaponnum == WEAPON_KF7SPECIAL
                      || weaponnum == WEAPON_FALCON2_SCOPE;
 
 

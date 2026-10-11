@@ -101,6 +101,10 @@ static float g_vr_internal_scale = 1.0f;
 bool is_weapon_hud = false;
 extern "C" void vr_get_eye_view_proj_gl(int eye, float outVP[16]);
 int VrPauseHub = true;
+void gfx_vr_scope_record(bool on, bool invert_y);
+void gfx_vr_scope_only(int hand);
+void gfx_vr_scope_render(void);
+extern "C" void vr_update_scope_layers(void);
 
 // --- VR: culling has to account for the per-eye clip-space shear -------------
 //
@@ -2639,6 +2643,24 @@ static void gfx_run_dl(Gfx* cmd) {
                     case VR_HUD_CAPTURE_END_H:
                         gfx_vr_hud_capture_end_H();
                         break;
+
+                    case VR_SCOPE_REC_BEGIN:
+                        gfx_flush();
+                        gfx_vr_scope_record(true, gfx_rapi->get_clip_parameters().invert_y);
+                        break;
+
+                    case VR_SCOPE_REC_END:
+                        gfx_flush();
+                        gfx_vr_scope_record(false, false);
+                        break;
+
+                    case VR_SCOPE_ONLY_BEGIN:
+                    case VR_SCOPE_ONLY_BEGIN_L:
+                    case VR_SCOPE_ONLY_END:
+                        gfx_flush();
+                        gfx_vr_scope_only(tag_w1 == VR_SCOPE_ONLY_BEGIN ? 0 : tag_w1 == VR_SCOPE_ONLY_BEGIN_L ? 1 : -1);
+                        break;
+
                     default:
                         break;
                 }
@@ -3135,6 +3157,8 @@ extern "C" void gfx_run(Gfx* commands) {
 
             // 3) Render the game directly into the headset texture
             gfx_run_dl(commands);
+            gfx_flush();
+            gfx_vr_scope_render();
 
             if (VrPauseHub && VrIsPaused) {
                 float vp[2][16];
@@ -3158,6 +3182,9 @@ extern "C" void gfx_run(Gfx* commands) {
             // copied and fed to the video encoder at that moment, from another process.
             // Sampling it from our mirror context after the release is a read-write hazard.
             // ─────────────────────────────────────────────────────
+            vr_update_scope_layers();
+            glFlush();
+
 #ifndef ANDROID // if PC
             int mw = 0, mh = 0;
             gfx_sdl_get_mirror_dimensions(&mw, &mh);

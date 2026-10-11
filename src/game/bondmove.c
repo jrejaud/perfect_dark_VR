@@ -67,6 +67,8 @@ static bool sPrevGripState = false;
 bool g_DisableGrabViaB = true;
 bool VrSeatedMode = false;
 extern bool vr_grip_for_unarmed;
+extern int vr_button_R_grip;
+extern int vr_button_L_grip;
 
 static void bgunProcessQuickDetonate(struct movedata *data, u32 c1buttons, u32 c1buttonsthisframe, u32 buttons1, u32 buttons2) {
     if ((((c1buttons & (buttons1)) && (c1buttonsthisframe & (buttons2)))
@@ -1420,8 +1422,10 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 
                             // --- JOYSTICK MOVEMENT IMPLEMENTATION ---
                             if (controlmode == CONTROLMODE_12 && g_Vars.tickmode != TICKMODE_AUTOWALK) {
-                                if (!g_Vars.currentplayer->insightaimmode) {
-                                    // The Y-axis (forward/backward) is always used to move forward/backward
+                                bool isSniper = (bgunGetWeaponNum(HAND_RIGHT) == WEAPON_SNIPERRIFLE);
+                                bool vrManualZoomActive = isSniper && (vr_button_R_grip != 0);
+                                if (!vrManualZoomActive) {
+                                    // The Y-axis (forward/backward) is used to move forward/backward unless adjusting manual zoom with grip
                                     movedata.analogwalk = c2sticky;
 
                                     // Handle the difference in direction between walking and riding the hoverbike
@@ -1862,7 +1866,11 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 #endif
 
                     // Handle manual zoom in and out (sniper, farsight and horizon scanner)
-                    if (canmanualzoom && g_Vars.currentplayer->insightaimmode) {
+                    bool vrAllowManualZoom = (controlmode == CONTROLMODE_12 && bgunGetWeaponNum(HAND_RIGHT) == WEAPON_SNIPERRIFLE)
+                        ? (vr_button_R_grip != 0)
+                        : (g_Vars.currentplayer->insightaimmode
+                            || (controlmode == CONTROLMODE_12 && (vr_button_R_grip != 0)));
+                    if (canmanualzoom && vrAllowManualZoom) {
                         increment = 1;
                         zoomout = c1buttons & sdmask;
                         zoomin = c1buttons & sumask;
@@ -1882,8 +1890,9 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 
 #ifndef PLATFORM_N64
                         if (controlmode == CONTROLMODE_PC || controlmode == CONTROLMODE_12) { // VR CONTROLMODE_12
-                            if (c2sticky < 0) {
-                                movedata.zoomoutfovpersec = -c2sticky / 70.0f;
+                            s32 zoomsticky = (controlmode == CONTROLMODE_12 && c2sticky == 0) ? c1sticky : c2sticky;
+                            if (zoomsticky < 0) {
+                                movedata.zoomoutfovpersec = -zoomsticky / 70.0f;
 
                                 if (movedata.zoomoutfovpersec > 1) {
                                     movedata.zoomoutfovpersec = 1;
@@ -1892,8 +1901,8 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
                                 movedata.zoomoutfovpersec =
                                         movedata.zoomoutfovpersec + movedata.zoomoutfovpersec;
                             }
-                            if (c2sticky > 0) {
-                                movedata.zoominfovpersec = c2sticky / 70.0f;
+                            if (zoomsticky > 0) {
+                                movedata.zoominfovpersec = zoomsticky / 70.0f;
 
                                 if (movedata.zoominfovpersec > 1) {
                                     movedata.zoominfovpersec = 1;

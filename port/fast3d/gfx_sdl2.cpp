@@ -74,7 +74,7 @@ static bool vsync_enabled = true;
 static int window_width = -1;
 static int window_height = -1;
 
-const char *VR_Version = "v2.0";
+const char *VR_Version = "v2.1";
 #ifndef VERSION_ROMID
 #define VERSION_ROMID "ntsc-final" 
 #endif
