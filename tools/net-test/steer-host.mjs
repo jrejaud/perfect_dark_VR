@@ -46,6 +46,9 @@ const wrap = (d) => ((d + 540) % 360) - 180;
 let last = null, stuck = 0, side = 'd', best = Infinity, sinceBest = 0;
 for (let step = 0; step < maxSteps; step++) {
 	await sleep(2100); // trace period is 2 s
+	// keep the Quest driving lock (15 min TTL) for the whole run, or another agent takes the
+	// headset mid-test and closes the game (2026-10-11)
+	try { sh('quest', ['claim']); } catch {}
 	const st = readTrace();
 	if (!st.local || !st.remote) { console.log('no trace yet'); continue; }
 	const host = st.remote, vr = st.local;
