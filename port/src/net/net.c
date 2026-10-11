@@ -902,10 +902,11 @@ static void netTraceTick(void)
 		if (!pl || !pl->prop) {
 			continue;
 		}
-		sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u p%d %s pos=(%.0f,%.0f,%.0f) theta=%.1f verta=%.1f health=%.3f dead=%d",
+		sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u p%d %s pos=(%.0f,%.0f,%.0f) theta=%.1f verta=%.1f health=%.3f dead=%d chrdamage=%.2f/%.2f",
 			g_NetTick, i, pl->isremote ? "remote" : "local",
 			pl->prop->pos.x, pl->prop->pos.y, pl->prop->pos.z,
-			pl->vv_theta, pl->vv_verta, pl->bondhealth, pl->isdead ? 1 : 0);
+			pl->vv_theta, pl->vv_verta, pl->bondhealth, pl->isdead ? 1 : 0,
+			pl->prop->chr ? pl->prop->chr->damage : -1.f, pl->prop->chr ? pl->prop->chr->maxdamage : -1.f);
 	}
 }
 

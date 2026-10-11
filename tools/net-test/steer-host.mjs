@@ -29,8 +29,8 @@ function readTrace() {
 	const out = sh('adb', ['-s', SERIAL, 'shell', `logcat -d --pid=${pid} -s PerfectDark | grep NETTRACE | tail -4`]);
 	const st = {};
 	for (const line of out.split('\n')) {
-		const m = line.match(/tick=(\d+) p(\d) (local|remote) pos=\((-?\d+),(-?\d+),(-?\d+)\) theta=([\d.]+) verta=(-?[\d.]+) health=([\d.]+) dead=(\d)/);
-		if (m) st[m[3]] = { tick: +m[1], x: +m[4], y: +m[5], z: +m[6], theta: +m[7], health: +m[9], dead: +m[10] };
+		const m = line.match(/tick=(\d+) p(\d) (local|remote) pos=\((-?\d+),(-?\d+),(-?\d+)\) theta=([\d.]+) verta=(-?[\d.]+) health=([\d.]+) dead=(\d)(?: chrdamage=([\d.-]+)\/([\d.-]+))?/);
+		if (m) st[m[3]] = { tick: +m[1], x: +m[4], y: +m[5], z: +m[6], theta: +m[7], health: +m[9], dead: +m[10], dmg: m[11] ?? '?' };
 	}
 	return st;
 }
@@ -55,7 +55,7 @@ for (let step = 0; step < maxSteps; step++) {
 	const dist = Math.hypot(vr.x - host.x, vr.z - host.z);
 	const want = bearing(host, vr);
 	const turn = wrap(want - host.theta);
-	console.log(`step ${step} host=(${host.x},${host.z}) th=${host.theta} vr=(${vr.x},${vr.z}) dist=${dist.toFixed(0)} turn=${turn.toFixed(0)} vrhealth=${vr.health}`);
+	console.log(`step ${step} host=(${host.x},${host.z}) th=${host.theta} vr=(${vr.x},${vr.z}) dist=${dist.toFixed(0)} turn=${turn.toFixed(0)} vrhealth=${vr.health} vrdmg=${vr.dmg}`);
 	if (Math.abs(turn) > 4) press(turn > 0 ? 'right' : 'left', Math.abs(turn) / TURN_DEG_PER_MS);
 	if (faceOnly) { if (Math.abs(turn) <= 4) break; continue; }
 	if (dist < stopDist) { console.log('arrived'); break; }
