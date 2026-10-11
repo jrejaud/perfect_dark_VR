@@ -61,6 +61,7 @@ bool gIsValveIndex = false;
 // Asking for playSpace explicitly is unambiguous on every runtime, so all swing
 // gestures use these and apply the play -> world transform themselves.
 static XrPosef gCtrlPosePlay[2] = {};
+static void vrSimApply(void); // agent test hook, see definition
 static XrSpaceVelocity gCachedVelocityPlay[2] = {};
 float vr_ctrl_quat_play[2][4];     // {w,x,y,z}, raw OpenXR basis, play space
 float vr_ctrl_velocity_play[2][3]; // m/s,       raw OpenXR basis, play space
@@ -684,7 +685,78 @@ XrResult update_vr_controllers(XrTime predicted_time) {
         }
     }
 
+    vrSimApply();
+
     return XR_SUCCESS;
+}
+
+// --- Simulated right controller, for agent-driven testing without anyone in the headset ---
+// While a file named "vrsim" exists in the working directory (the game's data folder), its
+// values replace the RIGHT controller every frame. One line of key=value pairs, e.g.
+//   trigger=1 yaw=-10 pitch=5 sx=0 sy=0 lsx=0 lsy=0
+// yaw/pitch: degrees, the aim relative to where the head looks (yaw + = right, pitch + = up).
+// sx/sy: right thumbstick (turning); lsx/lsy: left thumbstick (walking). Delete the file to
+// hand control back to the real controllers. Read every 15 frames; costs one fopen.
+static void vrSimApply(void)
+{
+    static int sFrame = 0;
+    static bool sOn = false;
+    static float sTrig = 0, sYaw = 0, sPitch = 0, sSx = 0, sSy = 0, sLsx = 0, sLsy = 0;
+
+    if ((sFrame++ % 15) == 0) {
+        FILE *f = fopen("vrsim", "r");
+        sOn = (f != nullptr);
+        if (f) {
+            char line[256] = {0};
+            if (fgets(line, sizeof(line), f)) {
+                sTrig = sYaw = sPitch = sSx = sSy = sLsx = sLsy = 0;
+                for (char *tok = strtok(line, " \t\r\n"); tok; tok = strtok(nullptr, " \t\r\n")) {
+                    float v = 0;
+                    if (sscanf(tok, "trigger=%f", &v) == 1) sTrig = v;
+                    else if (sscanf(tok, "yaw=%f", &v) == 1) sYaw = v;
+                    else if (sscanf(tok, "pitch=%f", &v) == 1) sPitch = v;
+                    else if (sscanf(tok, "lsx=%f", &v) == 1) sLsx = v;
+                    else if (sscanf(tok, "lsy=%f", &v) == 1) sLsy = v;
+                    else if (sscanf(tok, "sx=%f", &v) == 1) sSx = v;
+                    else if (sscanf(tok, "sy=%f", &v) == 1) sSy = v;
+                }
+            }
+            fclose(f);
+        }
+    }
+    if (!sOn) {
+        return;
+    }
+
+    ControllerInputState &r = gControllerStates[1];
+    const float yaw = -sYaw * 3.14159265f / 180.0f;   // OpenXR: +Y rotation turns left
+    const float pitch = sPitch * 3.14159265f / 180.0f;
+    // q = yaw(Y) * pitch(X), aim pose -Z forward, held low and to the right of the eyes
+    const float cy = cosf(yaw * 0.5f), sy = sinf(yaw * 0.5f);
+    const float cp = cosf(pitch * 0.5f), sp = sinf(pitch * 0.5f);
+    r.controller_pose.orientation.w = cy * cp;
+    r.controller_pose.orientation.x = cy * sp;
+    r.controller_pose.orientation.y = sy * cp;
+    r.controller_pose.orientation.z = -sy * sp;
+    r.controller_pose.position.x = 0.15f;
+    r.controller_pose.position.y = -0.25f;
+    r.controller_pose.position.z = -0.35f;
+    r.is_active = true;
+
+    const bool pressed = sTrig > 0.5f;
+    r.select.changedSinceLastSync = (r.select.currentState != (XrBool32)pressed);
+    r.select.currentState = pressed;
+    r.select.isActive = XR_TRUE;
+    r.trigger_value.currentState = sTrig;
+    r.trigger_value.isActive = XR_TRUE;
+    r.thumbstick.currentState.x = sSx;
+    r.thumbstick.currentState.y = sSy;
+    r.thumbstick.isActive = XR_TRUE;
+
+    ControllerInputState &l = gControllerStates[0];
+    l.thumbstick.currentState.x = sLsx;
+    l.thumbstick.currentState.y = sLsy;
+    l.thumbstick.isActive = XR_TRUE;
 }
 
 
