@@ -58,9 +58,11 @@
 #include "data.h"
 #include "types.h"
 #ifndef PLATFORM_N64
+#include "platform.h"
 #include "game/stagetable.h"
 #include "video.h"
-#include "platform.h"
+#include "net/net.h"
+#include "net/netmsg.h"
 #endif
 
 
@@ -6302,6 +6304,12 @@ struct coord gVrGunFwd[2]   = { {0,0,1}, {0,0,1} };
 struct coord gVrGunOff[2]   = { {0,0,0}, {0,0,0} };
 
 void vr_gun_pos_rot(int handnum, struct hand* hand) {
+#ifndef PLATFORM_N64
+    // This machine's controllers only ever drive the local player.
+    if (g_Vars.currentplayer->isremote) {
+        return;
+    }
+#endif
 
     int ctrlIndex = (handnum == HAND_RIGHT ? 1 : 0);
     if (g_Vars.currentplayer->hands[HAND_RIGHT].gset.weaponnum == WEAPON_LASER) {
@@ -7752,7 +7760,7 @@ struct defaultobj* bgunCreateThrownProjectile2(struct chrdata* chr, struct gset*
  * 2 = fumbling grenade from right hand (due to nbomb)
  * 3 = fumbling grenade from left hand (actually not possible)
  */
-void bgunCreateThrownProjectile(s32 handnum, struct gset* gset)
+struct defaultobj *bgunCreateThrownProjectile(s32 handnum, struct gset *gset)
 {
 
     Mtxf sp1f4;
@@ -7781,6 +7789,13 @@ void bgunCreateThrownProjectile(s32 handnum, struct gset* gset)
     f32 sp48[4];
     struct trainingdata* data;
     u32 stack;
+
+#ifndef PLATFORM_N64
+	// don't do anything if we're not the authority
+	if (g_NetMode == NETMODE_CLIENT) {
+		return NULL;
+	}
+#endif
 
     if (handnum >= 2) {
         droppinggrenade = true;
@@ -7974,7 +7989,16 @@ void bgunCreateThrownProjectile(s32 handnum, struct gset* gset)
                 weapon->base.hidden |= OBJHFLAG_THROWNKNIFE;
             }
         }
+
+#ifndef PLATFORM_N64
+		if (obj && g_NetMode == NETMODE_SERVER) {
+			netmsgSvcPropSpawnWrite(&g_NetMsgRel, obj->prop);
+			netmsgSvcPropMoveWrite(&g_NetMsgRel, obj->prop, NULL);
     }
+#endif
+	}
+
+	return obj;
 }
 
 void bgunUpdateHeldRocket(s32 handnum)
@@ -8080,7 +8104,11 @@ void bgunCreateFiredProjectile(s32 handnum)
     f32 spd4[4];
     f32 spc4[4];
 
-
+#ifndef PLATFORM_N64
+	if (g_NetMode == NETMODE_CLIENT) {
+		return;
+	}
+#endif
 
     hand = g_Vars.currentplayer->hands + handnum;
 
@@ -8310,6 +8338,12 @@ void bgunCreateFiredProjectile(s32 handnum)
                     weapon->base.prop = NULL;
                     weapon->base.model = NULL;
                 }
+#ifndef PLATFORM_N64
+				else if (g_NetMode == NETMODE_SERVER) {
+					netmsgSvcPropSpawnWrite(&g_NetMsgRel, weapon->base.prop);
+					netmsgSvcPropMoveWrite(&g_NetMsgRel, weapon->base.prop, NULL);
+				}
+#endif
 #else
                 // NTSC beta doesn't have any of the failure checks
 								Mtxf sp78;
@@ -8377,8 +8411,71 @@ void bgunCreateFiredProjectile(s32 handnum)
 
 
 
+#ifndef PLATFORM_N64
+// VR netplay: world-space aim of the local gun hand, expressed as view angles.
+// Sent as the player's networked theta/verta, so the server can fire a remote
+// VR player's shots straight through the centre of that player's camera.
+bool g_VrNetAimValid = false;
+f32 g_VrNetAimTheta = 0.f;
+f32 g_VrNetAimVerta = 0.f;
+
+static void vrNetLookForAngles(f32 theta, f32 verta, Mtxf *out)
+{
+    Mtxf ry;
+    mtx4LoadXRotation(BADDEG2RAD(360.0f - verta), out);
+    mtx4LoadYRotation(BADDEG2RAD(360.0f - theta), &ry);
+    mtx4MultMtx4InPlace(&ry, out);
+}
+
+static void vrNetUpdateAim(struct player *player)
+{
+    struct coord dir = { 0, 0, -1 };
+    mtx4RotateVecInPlace(&player->hands[HAND_RIGHT].posrotmtx, &dir);
+    dir.y = -dir.y;
+    mtx4RotateVecInPlace(camGetProjectionMtxF(), &dir);
+
+    const f32 len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (len < 0.0001f) {
+        g_VrNetAimValid = false;
+        return;
+    }
+    dir.x /= len;
+    dir.y /= len;
+    dir.z /= len;
+
+    f32 theta = -atan2f(dir.x, dir.z) * (180.0f / M_PI);
+    f32 verta = asinf(CLAMP(dir.y, -1.0f, 1.0f)) * (180.0f / M_PI);
+    verta = CLAMP(verta, -89.0f, 89.0f);
+
+    // Resolve the engine's angle sign conventions against its own look-vector
+    // math (bmove: Y(360 - theta) * X(360 - verta360)) instead of assuming them.
+    Mtxf look;
+    vrNetLookForAngles(theta, verta, &look);
+    if ((look.m[2][1] > 0.0f) != (dir.y > 0.0f) && fabsf(dir.y) > 0.001f) {
+        verta = -verta;
+    }
+    if ((look.m[2][0] > 0.0f) != (dir.x > 0.0f) && fabsf(dir.x) > 0.001f) {
+        theta = -theta;
+    }
+
+    while (theta < 0.0f) theta += 360.0f;
+    while (theta >= 360.0f) theta -= 360.0f;
+
+    g_VrNetAimTheta = theta;
+    g_VrNetAimVerta = verta;
+    g_VrNetAimValid = true;
+}
+#endif
+
 void bgunSwivel(f32 screenx, f32 screeny, f32 crossdamp, f32 aimdamp)
 {
+#ifndef PLATFORM_N64
+    // Remote players' crosshair comes from the network; never from this
+    // machine's controllers.
+    if (g_Vars.currentplayer->isremote) {
+        return;
+    }
+#endif
     f32 screenwidth = camGetScreenWidth();
     f32 screenheight = camGetScreenHeight();
     struct player *player = g_Vars.currentplayer;
@@ -8551,6 +8648,11 @@ void bgunSwivel(f32 screenx, f32 screeny, f32 crossdamp, f32 aimdamp)
     cam0f0b4c3c(player->crosspos2, &aimpos, 1000);
     bgunSetAimPos(&aimpos);
 
+#ifndef PLATFORM_N64
+    if (g_NetMode) {
+        vrNetUpdateAim(player);
+    }
+#endif
 }
 
 
@@ -8641,6 +8743,25 @@ void bgunCalculatePlayerShotSpread(struct coord* gunpos2d, struct coord* gundir2
     }
 
     scaledspread = 120.0f * spread / viGetFovY();
+
+#ifndef PLATFORM_N64
+    if (player->isremote) {
+        // A remote VR player's networked view angles ARE its gun aim (see
+        // vrNetUpdateAim), so shoot through the centre of its camera.
+        f32 crosspos[2];
+        f32 randfactor = dorandom ? (RANDOMFRAC() - 0.5f) * RANDOMFRAC() : 0.0f;
+        crosspos[0] = camGetScreenLeft() + camGetScreenWidth() * 0.5f
+            + randfactor * scaledspread * camGetScreenWidth() / (viGetHeight() * camGetPerspAspect());
+        randfactor = dorandom ? (RANDOMFRAC() - 0.5f) * RANDOMFRAC() : 0.0f;
+        crosspos[1] = camGetScreenTop() + camGetScreenHeight() * 0.5f
+            + randfactor * scaledspread * camGetScreenHeight() / viGetHeight();
+        gunpos2d->x = 0;
+        gunpos2d->y = 0;
+        gunpos2d->z = 0;
+        cam0f0b4c3c(crosspos, gundir2d, 1);
+        return;
+    }
+#endif
 
     // --- VR: firing direction from the hand ---
     struct coord vr_dir = { 0, 0, -1 };
@@ -9756,6 +9877,13 @@ void bgunDisarm(struct prop* attackerprop)
     s32 modelnum;
     s32 i;
     bool drop;
+	struct defaultobj *obj;
+#ifndef PLATFORM_N64
+	// don't do anything if we're not the authority
+	if (g_NetMode == NETMODE_CLIENT) {
+		return;
+	}
+#endif
 
     if (!weaponHasFlag(weaponnum, WEAPONFLAG_UNDROPPABLE) && weaponnum <= WEAPON_RCP45) {
 #if VERSION >= VERSION_NTSC_1_0
@@ -9772,6 +9900,12 @@ void bgunDisarm(struct prop* attackerprop)
         if (weaponnum <= WEAPON_UNARMED || player->gunctrl.switchtoweaponnum != -1) {
             return;
         }
+
+#ifndef PLATFORM_N64
+		if (g_NetMode == NETMODE_SERVER) {
+			netmsgSvcChrDisarmWrite(&g_NetMsgRel, player->prop->chr, attackerprop, weaponnum, 0.f, NULL);
+		}
+#endif
 
         chr = player->prop->chr;
         drop = true;
@@ -9801,7 +9935,7 @@ void bgunDisarm(struct prop* attackerprop)
 										&& player->hands[i].stateminor == HANDSTATEMINOR_ATTACK_THROW_0) {
 #endif
                     drop = false;
-                    bgunCreateThrownProjectile(i + 2, &player->hands[i].gset);
+					obj = bgunCreateThrownProjectile(i + 2, &player->hands[i].gset);
                 }
             }
         }
@@ -9825,6 +9959,13 @@ void bgunDisarm(struct prop* attackerprop)
                 }
 
                 objDrop(prop2, true);
+
+#ifndef PLATFORM_N64
+				if (g_NetMode == NETMODE_SERVER) {
+					netmsgSvcPropSpawnWrite(&g_NetMsgRel, prop2);
+					netmsgSvcPropMoveWrite(&g_NetMsgRel, prop2, NULL);
+				}
+#endif
             }
         }
 
@@ -15915,7 +16056,7 @@ void bgunSetTriggerOn(s32 handnum, bool on)
 s32 bgunConsiderToggleGunFunction(s32 usedowntime, bool trigpressed, bool fromactivemenu, bool fromdedicatedbutton)
 {
 #ifndef PLATFORM_N64
-    const bool extcontrols = PLAYER_EXTCFG().extcontrols;
+	const bool extcontrols = PLAYER_EXTCFG().extcontrols || g_Vars.currentplayer->isremote;
     bool docontinue;
 #endif
     switch (bgunGetWeaponNum(HAND_RIGHT)) {
@@ -16051,7 +16192,7 @@ void bgun0f0a8c50(void)
         case WEAPON_LAPTOPGUN:
         case WEAPON_DRAGON:
         case WEAPON_REMOTEMINE:
-            if (PLAYER_EXTCFG().extcontrols) {
+		if (PLAYER_EXTCFG().extcontrols || g_Vars.currentplayer->isremote) {
                 return;
             }
             break;
@@ -16251,7 +16392,7 @@ void bgunTickGameplay(bool triggeron) {
         VR_FUNC_SECONDARY = false;
     }
 
-    if(VrMotionThrowing) {
+    if(VrMotionThrowing && !player->isremote) {
         vr_R_trigger = get_button_state(1, "trigger"); //  for knif
         vr_L_trigger = get_button_state(0, "trigger"); //  for knif
     }
@@ -16495,13 +16636,25 @@ void bgunTickGameplay(bool triggeron) {
     // Trigger Right controller
     bool rightTrig = triggeron;
 
-    leftTrig = get_button_state(0, "trigger"); //  Trigger left controller
-
-    bool leftTrigPressed = (leftTrig && !vr_prevLeftTrig);
-    vr_prevLeftTrig = leftTrig;
+    bool leftTrigPressed;
+    bool leftTrigNow;
+#ifndef PLATFORM_N64
+    if (player->isremote) {
+        // Remote players fire from their networked trigger; never read this
+        // machine's controllers or touch the local trigger-edge state.
+        leftTrigNow = triggeron && player->hands[HAND_LEFT].inuse;
+        leftTrigPressed = false;
+    } else
+#endif
+    {
+        leftTrig = get_button_state(0, "trigger"); //  Trigger left controller
+        leftTrigNow = leftTrig;
+        leftTrigPressed = (leftTrig && !vr_prevLeftTrig);
+        vr_prevLeftTrig = leftTrig;
+    }
 
     // Keep the "global" logic (useful for doautoselect / timers)
-    bool anyTrig = rightTrig || leftTrig;
+    bool anyTrig = rightTrig || leftTrigNow;
 
     player->playertriggerprev = player->playertriggeron;
     player->playertriggeron = anyTrig;
@@ -16528,7 +16681,7 @@ void bgunTickGameplay(bool triggeron) {
         vr_grip_for_unarmed = false;
         // bypass the alternating behavior, map 1:1
         gunsfiring[HAND_RIGHT] = (rightTrig && player->hands[HAND_RIGHT].inuse);
-        gunsfiring[HAND_LEFT] = (leftTrig && player->hands[HAND_LEFT].inuse);
+        gunsfiring[HAND_LEFT] = (leftTrigNow && player->hands[HAND_LEFT].inuse);
     }else{
         vr_grip_for_unarmed = false;
     }
@@ -17324,7 +17477,7 @@ Gfx *bgunDrawHud(Gfx *gdl)
 
     struct player *player = g_Vars.currentplayer;
     s32 bottom = viGetViewTop() + viGetViewHeight()  -200; // VR
-    s32 playercount = PLAYERCOUNT();
+    s32 playercount = LOCALPLAYERCOUNT();
     s32 playernum = g_Vars.currentplayernum;
     struct gunctrl *ctrl;
     s32 secs60;

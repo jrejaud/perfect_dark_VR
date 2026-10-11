@@ -37,7 +37,69 @@
 #include "data.h"
 #include "types.h"
 #ifndef PLATFORM_N64
-extern f32 fabsf(f32);
+#include "net/net.h"
+#include "system.h"
+#include "utils.h"
+
+static inline void lerpcoord(struct coord *c, const struct coord *a, const struct coord *b, const f32 t) {
+	c->x = lerpf(a->x, b->x, t);
+	c->y = lerpf(a->y, b->y, t);
+	c->z = lerpf(a->z, b->z, t);
+}
+
+static void bwalkUpdateRemote(void)
+{
+	struct player *pl = g_Vars.currentplayer;
+	const struct netplayermove *inmove = &pl->client->inmove[0];
+	const struct netplayermove *inmoveprev = &pl->client->inmove[1];
+	struct coord delta;
+	u16 cdtype = CDTYPE_ALL;
+	s32 moveticks = inmove->tick - inmoveprev->tick;
+	if (moveticks > g_NetInterpTicks) {
+		moveticks = g_NetInterpTicks;
+	}
+
+	pl->client->inmovetick = inmove->tick;
+
+	pl->bondshotspeed.x = 0.f;
+	pl->bondshotspeed.y = 0.f;
+	pl->bondshotspeed.z = 0.f;
+	pl->bondbreathing = 0.f;
+
+	const bool forcepos = !inmoveprev->tick ||
+		(inmove->ucmd & UCMD_FL_FORCEPOS) ||
+		(fabsf(pl->prop->pos.x - inmove->pos.x) > 512.f) ||
+		(fabsf(pl->prop->pos.y - inmove->pos.y) > 512.f) ||
+		(fabsf(pl->prop->pos.z - inmove->pos.z) > 512.f);
+
+	delta.x = 0.f;
+	delta.y = 0.f;
+	delta.z = 0.f;
+
+	// extrapolate
+	bwalk0f0c69b8();
+
+ 	if (forcepos) {
+		// no interpolation, set position and lock the lad in place
+		pl->prop->pos = inmove->pos;
+		pl->client->lerpticks = g_NetInterpTicks + 1;
+		cdtype = CDTYPE_PLAYERS; // don't get stuck in the local client
+	} else if (!moveticks) {
+		// duplicate move, reposition to correct coords
+		delta.x = inmove->pos.x - pl->prop->pos.x;
+		delta.x = inmove->pos.y - pl->prop->pos.y;
+		delta.x = inmove->pos.z - pl->prop->pos.z;
+		bwalk0f0c63bc(&delta, pl->swaytarget == 0.0f, cdtype);
+	} else if (pl->client->lerpticks <= moveticks) {
+		// lerp towards the correct position
+		const f32 dt = (f32)1.f / (f32)moveticks;
+		delta.x = g_Vars.lvupdate60freal * (inmove->pos.x - pl->prop->pos.x) * dt;
+		delta.y = g_Vars.lvupdate60freal * (inmove->pos.y - pl->prop->pos.y) * dt;
+		delta.z = g_Vars.lvupdate60freal * (inmove->pos.z - pl->prop->pos.z) * dt;
+		bwalk0f0c63bc(&delta, pl->swaytarget == 0.0f, cdtype);
+		pl->client->lerpticks += g_Vars.lvupdate60;
+	}
+}
 #endif
 
 #include "input.h"
@@ -236,6 +298,12 @@ static void vr_rotate_vector_by_quaternion_inv(struct coord *v, const XrQuaterni
 
 // Camera position: the body plus wherever your head has leaned to.
 void vr_get_head_pos(struct coord *out) {
+#ifndef PLATFORM_N64
+    if (g_Vars.currentplayer->isremote) {
+        *out = g_Vars.currentplayer->prop->pos;
+        return;
+    }
+#endif
     out->x = g_Vars.currentplayer->prop->pos.x + sVrHeadOffset.x;
     out->y = g_Vars.currentplayer->prop->pos.y;
     out->z = g_Vars.currentplayer->prop->pos.z + sVrHeadOffset.z;
@@ -354,6 +422,12 @@ void vr_player_pos(void) {
     struct coord shownPrev;
     struct coord delta;
     f32 dist;
+
+#ifndef PLATFORM_N64
+    if (g_Vars.currentplayer->isremote) {
+        return; // remote players are positioned by the network
+    }
+#endif
 
     if (g_Vars.currentplayer->isdead
         || g_Vars.tickmode != TICKMODE_NORMAL
@@ -477,6 +551,11 @@ void vr_player_pos(void) {
 
 
 void vr_player_rot(void) {
+#ifndef PLATFORM_N64
+    if (g_Vars.currentplayer->isremote) {
+        return; // remote players are oriented by the network
+    }
+#endif
 
 
     if(g_Vars.currentplayer->isdead == false
@@ -527,6 +606,11 @@ void vr_player_rot(void) {
 
 void vr_special_rot_mode(void)
 {
+#ifndef PLATFORM_N64
+    if (g_Vars.currentplayer->isremote) {
+        return;
+    }
+#endif
     /* Hoverbike */
     is_hoverbike_mode = g_Vars.currentplayer->bondmovemode == MOVEMODE_BIKE;
 
@@ -1119,7 +1203,7 @@ bool bwalkCalculateNewPositionWithPush(struct coord* delta, f32 rotateamount, bo
                 }
                 else if (chr->chrflags & CHRCFLAG_PUSHABLE) {
                     if (g_Vars.antiplayernum < 0
-                        || g_Vars.currentplayer != g_Vars.anti
+							|| PLAYER_IS_NOT_ANTI(g_Vars.currentplayer)
                         || (chr->hidden & CHRHFLAG_ANTINONINTERACTABLE) == 0) {
                         canpush = true;
                     }
@@ -1467,7 +1551,7 @@ void bwalkUpdateVertical(void)
     // Maybe reset counter-op's radius - not sure why
     // Maybe it gets set to 0 when they die?
     if (g_Vars.antiplayernum >= 0
-        && g_Vars.currentplayer == g_Vars.anti
+			&& PLAYER_IS_ANTI(g_Vars.currentplayer)
         && g_Vars.currentplayer->bond2.radius != 30
         && cdTestVolume(&g_Vars.currentplayer->prop->pos, 30, g_Vars.currentplayer->prop->rooms, CDTYPE_ALL, CHECKVERTICAL_YES, ymax - g_Vars.currentplayer->prop->pos.y, ymin - g_Vars.currentplayer->prop->pos.y)) {
         g_Vars.currentplayer->prop->chr->radius = 30;
@@ -2719,6 +2803,12 @@ void bwalkTick(void)
     bwalkUpdatePrevPos();
     bwalkUpdateTheta();
     bmoveUpdateVerta();
+
+#ifndef PLATFORM_N64
+	if (g_Vars.currentplayer->isremote) {
+		bwalkUpdateRemote();
+	} else
+#endif
     bwalk0f0c69b8();
 
     bwalkUpdateVertical();

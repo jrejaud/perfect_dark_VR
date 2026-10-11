@@ -1787,7 +1787,7 @@ Gfx *sightDraw(Gfx *gdl, bool sighton, s32 sight)
     }
 #endif
 
-    if (PLAYERCOUNT() >= 2 && g_Vars.coopplayernum < 0 && g_Vars.antiplayernum < 0) {
+    if (LOCALPLAYERCOUNT() >= 2 && g_Vars.coopplayernum < 0 && g_Vars.antiplayernum < 0) {
         sight = SIGHT_DEFAULT;
     }
 

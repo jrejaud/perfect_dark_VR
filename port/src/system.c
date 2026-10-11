@@ -12,6 +12,7 @@
 #include <SDL.h>
 #include <PR/ultratypes.h>
 #include "platform.h"
+#include "console.h"
 #include "system.h"
 
 #ifdef ANDROID
@@ -162,6 +163,12 @@ u64 sysGetMicroseconds(void)
     return ((u64)tv.tv_sec * USEC_IN_SEC + (u64)tv.tv_usec) - startTick;
 }
 
+float sysGetSeconds(void)
+{
+	u64 t = sysGetMicroseconds();
+	return (f32)t / 1000000.f;
+}
+
 s32 sysLogIsOpen(void)
 {
     return (logPath[0] != '\0');
@@ -182,24 +189,30 @@ void sysLogPrintf(s32 level, const char *fmt, ...)
 
 #ifdef ANDROID
     int android_level = ANDROID_LOG_INFO;
-    switch(level) {
+    switch(level & 0x0f) {
         case LOG_WARNING: android_level = ANDROID_LOG_WARN; break;
         case LOG_ERROR: android_level = ANDROID_LOG_ERROR; break;
         default: android_level = ANDROID_LOG_INFO; break;
     }
-    __android_log_print(android_level, LOG_TAG, "%s%s", prefix[level], logmsg);
+    __android_log_print(android_level, LOG_TAG, "%s%s", prefix[level & 0x0f], logmsg);
 #else
     if (logPath[0]) {
 		FILE *f = fopen(logPath, "ab");
 		if (f) {
-			fprintf(f, "%s%s\n", prefix[level], logmsg);
+			fprintf(f, "%s%s\n", prefix[level & 0x0f], logmsg);
 			fclose(f);
 		}
 	}
 
-	FILE *fout = (level == LOG_NOTE) ? stdout : stderr;
-	fprintf(fout, "%s%s\n", prefix[level], logmsg);
+	FILE *fout = ((level & 0x0f) == LOG_NOTE) ? stdout : stderr;
+	fprintf(fout, "%s%s\n", prefix[level & 0x0f], logmsg);
+	fflush(fout);
+
 #endif
+
+	if ((level & LOGFLAG_NOCON) == 0) {
+		conPrintLn((level & LOGFLAG_SHOWMSG) != 0, logmsg);
+	}
 }
 
 void sysFatalError(const char *fmt, ...)

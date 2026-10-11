@@ -21,11 +21,14 @@ android {
         
         // Dynamic applicationId per region so NTSC, PAL, and JPN can coexist
         def idSuffix = (romId == 'pal-final') ? '.pal' : ((romId == 'jpn-final') ? '.jpn' : '')
-        applicationId "com.perfectdark.port" + idSuffix
+        // -PPKG_SUFFIX=.netplay installs a side-by-side test build that keeps the
+        // regular install (and its ROM, saves and texture packs) untouched.
+        def pkgSuffix = project.hasProperty('PKG_SUFFIX') ? project.property('PKG_SUFFIX') : ''
+        applicationId "com.perfectdark.port" + idSuffix + pkgSuffix
         
         // Dynamic app label shown on Meta Quest
         def regionLabel = (romId == 'pal-final') ? ' (PAL)' : ((romId == 'jpn-final') ? ' (JPN)' : ' (NTSC)')
-        resValue "string", "app_name", "Perfect Dark VR" + regionLabel
+        resValue "string", "app_name", "Perfect Dark VR" + regionLabel + (pkgSuffix ? " [" + pkgSuffix.substring(1) + "]" : "")
 
         minSdk 21
         targetSdk 34

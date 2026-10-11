@@ -22,15 +22,22 @@ extern int32_t g_internalRenderHeight;
 #define MAX_CHRSPERTEAM        32
 #define MAX_CHRWAYPOINTS       6
 #define MAX_EYESPYDARTS        8
+#ifdef PLATFORM_N64
+#define MAX_COOPCHRS           2
+#else
+#define MAX_COOPCHRS           MAX_PLAYERS
+#endif
 #define MAX_MPCHRS             (MAX_PLAYERS + MAX_BOTS)
-#define MAX_MPPLAYERCONFIGS    (MAX_PLAYERS + 2)
+#define MAX_MPPLAYERCONFIGS    (MAX_PLAYERS + MAX_COOPCHRS)
 #define MAX_OBJECTIVES         10
-#define MAX_PLAYERS            4
+#define MAX_LOCAL_PLAYERS      4
+#define MAX_PLAYERS            8
 #define MAX_PROPSPERROOMCHUNK  7
 #define MAX_ROOMPROPLISTCHUNKS 256
 #define MAX_SQUADRONS          16
 #define MAX_TEAMS              8
 #define MAX_EXPLOSIONS_DEFAULT 6
+#define MAX_PLAYERNAME         15
 
 #define NUM_BOTDIFFS          6
 #define NUM_CYCLEABLE_WEAPONS 45
@@ -71,7 +78,9 @@ extern int32_t g_internalRenderHeight;
 #define SECSTOTIME60(secs)  (secs * 60)
 #define PFS(device)         (device == SAVEDEVICE_GAMEPAK ? NULL : &g_Pfses[device])
 
-#if MAX_PLAYERS >= 4
+#if MAX_PLAYERS > 4
+#define PLAYERCOUNT()       playerGetCount()
+#elif MAX_PLAYERS == 4
 #define PLAYERCOUNT()       ((g_Vars.players[0] ? 1 : 0) + (g_Vars.players[1] ? 1 : 0) + (g_Vars.players[2] ? 1 : 0) + (g_Vars.players[3] ? 1 : 0))
 #elif MAX_PLAYERS >= 3
 #define PLAYERCOUNT()       ((g_Vars.players[0] ? 1 : 0) + (g_Vars.players[1] ? 1 : 0) + (g_Vars.players[2] ? 1 : 0))
@@ -79,6 +88,20 @@ extern int32_t g_internalRenderHeight;
 #define PLAYERCOUNT()       ((g_Vars.players[0] ? 1 : 0) + (g_Vars.players[1] ? 1 : 0))
 #else
 #define PLAYERCOUNT()       1
+#endif
+
+#if MAX_COOPCHRS > 2
+#define PLAYER_IS_ANTI(plr) (g_Vars.antiplayernum >= 0 && (plr) != g_Vars.bond)
+#define PLAYER_IS_NOT_ANTI(plr) (g_Vars.antiplayernum < 0 || (plr) == g_Vars.bond)
+#define PLAYERNUM_IS_ANTI(plrnum) (g_Vars.antiplayernum >= 0 && (plrnum) != g_Vars.bondplayernum)
+#define PROP_IS_FOR_ANTI_PLAYER(plrprop) (g_Vars.antiplayernum >= 0 && g_Vars.anti && (plrprop)->type == PROPTYPE_PLAYER && (plrprop) != g_Vars.bond->prop)
+#define EXPLOSION_OWNER_IS_ANTI_PLAYER(expowner) (g_Vars.antiplayernum >= 0 && (expowner) != g_Vars.bondplayernum && mpGetChrFromPlayerIndex((expowner)) != NULL)
+#else
+#define PLAYER_IS_ANTI(plr) ((plr) == g_Vars.anti)
+#define PLAYER_IS_NOT_ANTI(plr) ((plr) != g_Vars.anti)
+//define PLAYERNUM_IS_ANTI(plrnum) ((plrnum) == g_Vars.antiplayernum)
+#define PROP_IS_FOR_ANTI_PLAYER(plrprop) ((plrprop) == g_Vars.anti->prop)
+#define EXPLOSION_OWNER_IS_ANTI_PLAYER(expowner) ((expowner) == g_Vars.antiplayernum)
 #endif
 
 #define VALIDWEAPON()       (g_Vars.currentplayer->gunctrl.weaponnum >= WEAPON_UNARMED && g_Vars.currentplayer->gunctrl.weaponnum <= WEAPON_COMBATBOOST)
@@ -700,6 +723,7 @@ extern int32_t g_internalRenderHeight;
 #define CONTROLMODE_23 6
 #define CONTROLMODE_24 7
 #define CONTROLMODE_PC 8 // "pc port" controls; enabled in the .ini file
+#define CONTROLMODE_NA 9 // dummy controls for remote players
 
 #define COUNTDOWNTIMERREASON_AI        0x01
 #define COUNTDOWNTIMERREASON_NOCONTROL 0x10
@@ -3697,6 +3721,19 @@ extern int32_t g_internalRenderHeight;
 
 #define SCREEN_ASPECT 1.0f // VR
 
+// Screen size of the flat-screen PC port (port-net). Crosshair positions are
+// exchanged in these units with flat-screen peers in net games.
+#if VERSION == VERSION_PAL_FINAL
+#define NET_FLAT_SCREEN_W 320
+#define NET_FLAT_SCREEN_H 266
+#elif VERSION == VERSION_PAL_BETA
+#define NET_FLAT_SCREEN_W 320
+#define NET_FLAT_SCREEN_H 252
+#else
+#define NET_FLAT_SCREEN_W 320
+#define NET_FLAT_SCREEN_H 220
+#endif
+
 #define SCREENRATIO_NORMAL 0
 #define SCREENRATIO_16_9   1
 
@@ -4731,6 +4768,8 @@ enum weaponnum {
 #define BUTTON_UI_ACCEPT BUTTON_ACCEPT_WPNFORWARD
 #define BUTTON_UI_CANCEL BUTTON_CANCEL_USE
 
+#define LOCALPLAYERCOUNT() PLAYERCOUNT()
+
 #else
 
 // xbla behavior
@@ -4774,6 +4813,12 @@ enum weaponnum {
 #define MPSETUP_MAXSETUPS 128
 #define MPSETUP_MAXNAME 17
 #define MPSETUP_BLOCKSIZE 80
+
+#define NETMODE_NONE 0
+#define NETMODE_SERVER 1
+#define NETMODE_CLIENT 2
+
+#define LOCALPLAYERCOUNT() playerGetLocalCount()
 
 #endif
 

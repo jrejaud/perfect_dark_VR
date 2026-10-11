@@ -56,6 +56,70 @@
         android:textColor="#FFFFFF"
         android:textSize="20sp" />
 
+    <!-- Net play (experimental, port-net). Host = Combat Simulator server;
+         Join = connect to a host's IP. Typed here because the 2D panel gets the
+         Quest system keyboard, which the in-game menu does not. -->
+    <TextView
+        android:id="@+id/netLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Net play (experimental)"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp" />
+
+    <RadioGroup
+        android:id="@+id/netModeGroup"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <RadioButton
+            android:id="@+id/netModeOff"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:checked="true"
+            android:text="Offline"
+            android:textColor="#FFFFFF" />
+
+        <RadioButton
+            android:id="@+id/netModeHost"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="24dp"
+            android:text="Host"
+            android:textColor="#FFFFFF" />
+
+        <RadioButton
+            android:id="@+id/netModeJoin"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="24dp"
+            android:text="Join"
+            android:textColor="#FFFFFF" />
+    </RadioGroup>
+
+    <EditText
+        android:id="@+id/netAddress"
+        android:layout_width="320dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="Host address (IP or IP:port)"
+        android:importantForAutofill="no"
+        android:inputType="textUri"
+        android:singleLine="true"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#888888" />
+
+    <TextView
+        android:id="@+id/netInfo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textColor="#AAAAAA"
+        android:textSize="12sp" />
+
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent">

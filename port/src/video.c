@@ -574,6 +574,14 @@ void videoSetExternalTextures(s32 external)
 	gfx_external_textures_enabled = (bool)texExternal;
 }
 
+void videoCapFramerate(s32 limit)
+{
+	if (vidFramerateLimit > 0 && vidFramerateLimit < limit) {
+		limit = vidFramerateLimit;
+	}
+	wmAPI->set_target_fps(limit ? limit : vidFramerateLimit);
+}
+
 s32 videoCreateFramebuffer(u32 w, u32 h, s32 upscale, s32 autoresize)
 {
     return gfx_create_framebuffer(w, h, upscale, autoresize);

@@ -6,6 +6,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.RadioGroup;
+import android.content.SharedPreferences;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -57,6 +60,16 @@ public class LauncherActivity extends AppCompatActivity {
     private Button pickRomButton;
     private Button startButton;
     private Button resetGraphicsButton;
+    private RadioGroup netModeGroup;
+    private EditText netAddress;
+    private TextView netInfo;
+
+    private static final String NET_PREFS = "netplay";
+    // Launch extras for scripted runs: net_mode = off|host|join, net_addr = host[:port],
+    // autostart = true to press Start as soon as the ROM is valid.
+    public static final String EXTRA_NET_MODE = "net_mode";
+    public static final String EXTRA_NET_ADDR = "net_addr";
+    public static final String EXTRA_AUTOSTART = "autostart";
 
     private final ActivityResultLauncher romPicker =
             registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::onRomPicked);
@@ -78,7 +91,13 @@ public class LauncherActivity extends AppCompatActivity {
         startButton.setOnClickListener(v -> onStartClicked());
         resetGraphicsButton.setOnClickListener(v -> onResetGraphicsClicked());
 
+        setupNetUi();
+
         refreshRomStatusUi();
+
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_AUTOSTART, false) && startButton.isEnabled()) {
+            onStartClicked();
+        }
     }
 
     @Override
@@ -224,10 +243,91 @@ public class LauncherActivity extends AppCompatActivity {
         }
     }
 
+// ---------------------------------------------------------------------
+// Net play (port-net): Host / Join, passed to the game as --host / --connect
+// ---------------------------------------------------------------------
+
+    private void setupNetUi() {
+        netModeGroup = findViewById(R.id.netModeGroup);
+        netAddress = findViewById(R.id.netAddress);
+        netInfo = findViewById(R.id.netInfo);
+
+        SharedPreferences prefs = getSharedPreferences(NET_PREFS, MODE_PRIVATE);
+        String mode = prefs.getString("mode", "off");
+        String addr = prefs.getString("addr", "");
+
+        Intent in = getIntent();
+        if (in != null && in.hasExtra(EXTRA_NET_MODE)) {
+            mode = in.getStringExtra(EXTRA_NET_MODE);
+        }
+        if (in != null && in.hasExtra(EXTRA_NET_ADDR)) {
+            addr = in.getStringExtra(EXTRA_NET_ADDR);
+        }
+
+        netAddress.setText(addr);
+        if ("host".equals(mode)) {
+            netModeGroup.check(R.id.netModeHost);
+        } else if ("join".equals(mode)) {
+            netModeGroup.check(R.id.netModeJoin);
+        } else {
+            netModeGroup.check(R.id.netModeOff);
+        }
+
+        netModeGroup.setOnCheckedChangeListener((g, id) -> refreshNetUi());
+        refreshNetUi();
+    }
+
+    private String currentNetMode() {
+        int id = netModeGroup.getCheckedRadioButtonId();
+        if (id == R.id.netModeHost) return "host";
+        if (id == R.id.netModeJoin) return "join";
+        return "off";
+    }
+
+    private void refreshNetUi() {
+        String mode = currentNetMode();
+        netAddress.setVisibility("join".equals(mode) ? View.VISIBLE : View.GONE);
+        if ("host".equals(mode)) {
+            netInfo.setText("Hosting on UDP port 27100. Set up Combat Simulator, wait for players, then start.");
+        } else if ("join".equals(mode)) {
+            netInfo.setText("Everyone needs the same ROM and the same build.");
+        } else {
+            netInfo.setText("");
+        }
+    }
+
+    private String buildNetArgs() {
+        String mode = currentNetMode();
+        String addr = netAddress.getText().toString().trim();
+
+        getSharedPreferences(NET_PREFS, MODE_PRIVATE).edit()
+                .putString("mode", mode)
+                .putString("addr", addr)
+                .apply();
+
+        if ("host".equals(mode)) {
+            return "--host" + traceArg();
+        }
+        if ("join".equals(mode) && !addr.isEmpty() && !addr.contains(" ")) {
+            return "--connect " + addr + traceArg();
+        }
+        return "";
+    }
+
+    // net_trace=true (launch extra) adds --net-trace: per-player state lines in logcat.
+    private String traceArg() {
+        return (getIntent() != null && getIntent().getBooleanExtra("net_trace", false)) ? " --net-trace" : "";
+    }
+
     private void startGame() {
         android.util.Log.i("PerfectDark", "Start clicked, launching MainActivity in VR mode");
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra(MainActivity.EXTRA_FROM_LAUNCHER, true);
+        String netArgs = buildNetArgs();
+        if (!netArgs.isEmpty()) {
+            android.util.Log.i("PerfectDark", "Net play args: " + netArgs);
+            intent.putExtra(MainActivity.EXTRA_ARGS, netArgs);
+        }
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
         finish();

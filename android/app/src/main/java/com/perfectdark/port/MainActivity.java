@@ -18,6 +18,19 @@ public class MainActivity extends SDLActivity {
     // to LauncherActivity first.
     public static final String EXTRA_FROM_LAUNCHER = "com.perfectdark.port.FROM_LAUNCHER";
 
+    // Space-separated command-line arguments for the game (e.g. "--host",
+    // "--connect 192.168.1.20"), set by LauncherActivity's net play controls.
+    public static final String EXTRA_ARGS = "com.perfectdark.port.ARGS";
+
+    @Override
+    protected String[] getArguments() {
+        String args = getIntent() != null ? getIntent().getStringExtra(EXTRA_ARGS) : null;
+        if (args == null || args.trim().isEmpty()) {
+            return new String[0];
+        }
+        return args.trim().split("\\s+");
+    }
+
     private static native void nativeSetVrJavaContext(android.app.Activity activity, android.view.Surface surface);
 
     static {
@@ -41,6 +54,10 @@ public class MainActivity extends SDLActivity {
         // which will display the ROM selection window and handle the Start button.
             Log.i(TAG, "Not launched from LauncherActivity, redirecting to LauncherActivity");
             Intent intent = new Intent(this, LauncherActivity.class);
+            // forward launch extras (net_mode / net_addr / autostart for net play)
+            if (getIntent() != null && getIntent().getExtras() != null) {
+                intent.putExtras(getIntent().getExtras());
+            }
             startActivity(intent);
             finish();
             return;

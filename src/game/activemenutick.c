@@ -32,7 +32,7 @@ void amTick(void)
     bool just_opened = false;
     // ---------------------------------------------------
 
-	for (i = 0; i < PLAYERCOUNT(); i++) {
+	for (i = 0; i < LOCALPLAYERCOUNT(); i++) {
 		setCurrentPlayerNum(i);
 		g_AmIndex = g_Vars.currentplayernum;
 
