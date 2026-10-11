@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <errno.h>
 #include <string.h>
 #include "platform.h"
 #include "net/netenet.h"
@@ -814,6 +815,9 @@ void netClientSettingsChanged(void)
 	netSend(NULL, &g_NetMsgRel, true, NETCHAN_CONTROL);
 }
 
+static u32 g_NetServiceErrs = 0;
+static s32 g_NetServiceErrno = 0;
+
 void netStartFrame(void)
 {
 	if (!g_NetMode) {
@@ -827,7 +831,12 @@ void netStartFrame(void)
 	ENetEvent ev = { .type = ENET_EVENT_TYPE_NONE };
 	while (!polled) {
 		if (enet_host_check_events(g_NetHost, &ev) <= 0) {
-			if (enet_host_service(g_NetHost, &ev, 1) <= 0) {
+			const s32 svc = enet_host_service(g_NetHost, &ev, 1);
+			if (svc < 0) {
+				++g_NetServiceErrs;
+				g_NetServiceErrno = errno;
+			}
+			if (svc <= 0) {
 				break;
 			}
 			polled = true;
@@ -898,7 +907,8 @@ static void netTraceTick(void)
 	}
 	nexttick = g_NetTick + 120;
 
-	sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u input textinput=%d", g_NetTick, inputIsTextInputActive());
+	sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u input textinput=%d mode=%d rxpackets=%u rxbytes=%u peers=%u svcerrs=%u errno=%d", g_NetTick, inputIsTextInputActive(), g_NetMode,
+		g_NetHost ? g_NetHost->totalReceivedPackets : 0, g_NetHost ? g_NetHost->totalReceivedData : 0, g_NetHost ? (u32)g_NetHost->connectedPeers : 0, g_NetServiceErrs, g_NetServiceErrno);
 
 	for (s32 i = 0; i < MAX_PLAYERS; ++i) {
 		const struct player *pl = g_Vars.players[i];

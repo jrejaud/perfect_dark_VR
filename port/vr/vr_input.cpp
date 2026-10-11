@@ -694,6 +694,7 @@ XrResult update_vr_controllers(XrTime predicted_time) {
 // While a file named "vrsim" exists in the working directory (the game's data folder), its
 // values replace the RIGHT controller every frame. One line of key=value pairs, e.g.
 //   trigger=1 yaw=-10 pitch=5 sx=0 sy=0 lsx=0 lsy=0
+// Buttons (1 = held): a b rgrip (right), x y menu lgrip ltrig (left).
 // yaw/pitch: degrees, the aim relative to where the head looks (yaw + = right, pitch + = up).
 // sx/sy: right thumbstick (turning); lsx/lsy: left thumbstick (walking). Delete the file to
 // hand control back to the real controllers. Read every 15 frames; costs one fopen.
@@ -702,6 +703,7 @@ static void vrSimApply(void)
     static int sFrame = 0;
     static bool sOn = false;
     static float sTrig = 0, sYaw = 0, sPitch = 0, sSx = 0, sSy = 0, sLsx = 0, sLsy = 0;
+    static float sA = 0, sB = 0, sX = 0, sY = 0, sMenu = 0, sLGrip = 0, sRGrip = 0, sLTrig = 0;
 
     if ((sFrame++ % 15) == 0) {
         FILE *f = fopen("vrsim", "r");
@@ -710,6 +712,7 @@ static void vrSimApply(void)
             char line[256] = {0};
             if (fgets(line, sizeof(line), f)) {
                 sTrig = sYaw = sPitch = sSx = sSy = sLsx = sLsy = 0;
+                sA = sB = sX = sY = sMenu = sLGrip = sRGrip = sLTrig = 0;
                 for (char *tok = strtok(line, " \t\r\n"); tok; tok = strtok(nullptr, " \t\r\n")) {
                     float v = 0;
                     if (sscanf(tok, "trigger=%f", &v) == 1) sTrig = v;
@@ -719,6 +722,14 @@ static void vrSimApply(void)
                     else if (sscanf(tok, "lsy=%f", &v) == 1) sLsy = v;
                     else if (sscanf(tok, "sx=%f", &v) == 1) sSx = v;
                     else if (sscanf(tok, "sy=%f", &v) == 1) sSy = v;
+                    else if (sscanf(tok, "a=%f", &v) == 1) sA = v;
+                    else if (sscanf(tok, "b=%f", &v) == 1) sB = v;
+                    else if (sscanf(tok, "x=%f", &v) == 1) sX = v;
+                    else if (sscanf(tok, "y=%f", &v) == 1) sY = v;
+                    else if (sscanf(tok, "menu=%f", &v) == 1) sMenu = v;
+                    else if (sscanf(tok, "lgrip=%f", &v) == 1) sLGrip = v;
+                    else if (sscanf(tok, "rgrip=%f", &v) == 1) sRGrip = v;
+                    else if (sscanf(tok, "ltrig=%f", &v) == 1) sLTrig = v;
                 }
             }
             fclose(f);
@@ -757,6 +768,21 @@ static void vrSimApply(void)
     l.thumbstick.currentState.x = sLsx;
     l.thumbstick.currentState.y = sLsy;
     l.thumbstick.isActive = XR_TRUE;
+
+    auto setb = [](XrActionStateBoolean &b, float v) {
+        const XrBool32 on = v > 0.5f;
+        b.changedSinceLastSync = (b.currentState != on);
+        b.currentState = on;
+        b.isActive = XR_TRUE;
+    };
+    setb(r.button_a, sA);
+    setb(r.button_b, sB);
+    setb(r.grip_click, sRGrip);
+    setb(l.button_x, sX);
+    setb(l.button_y, sY);
+    setb(l.menu, sMenu);
+    setb(l.grip_click, sLGrip);
+    setb(l.select, sLTrig);
 }
 
 
