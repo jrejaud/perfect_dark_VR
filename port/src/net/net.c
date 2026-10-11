@@ -905,7 +905,9 @@ static void netTraceTick(void)
 	if (!trace || g_NetTick < nexttick) {
 		return;
 	}
-	nexttick = g_NetTick + 120;
+	nexttick = g_NetTick + 60;
+
+	sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u aim valid=%d theta=%.1f verta=%.1f", g_NetTick, g_VrNetAimValid ? 1 : 0, g_VrNetAimTheta, g_VrNetAimVerta);
 
 	sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u input textinput=%d mode=%d rxpackets=%u rxbytes=%u peers=%u svcerrs=%u errno=%d", g_NetTick, inputIsTextInputActive(), g_NetMode,
 		g_NetHost ? g_NetHost->totalReceivedPackets : 0, g_NetHost ? g_NetHost->totalReceivedData : 0, g_NetHost ? (u32)g_NetHost->connectedPeers : 0, g_NetServiceErrs, g_NetServiceErrno);
@@ -915,11 +917,11 @@ static void netTraceTick(void)
 		if (!pl || !pl->prop) {
 			continue;
 		}
-		sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u p%d %s pos=(%.0f,%.0f,%.0f) theta=%.1f verta=%.1f health=%.3f dead=%d chrdamage=%.2f/%.2f",
+		sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u p%d %s pos=(%.0f,%.0f,%.0f) theta=%.1f verta=%.1f health=%.3f dead=%d chrdamage=%.2f/%.2f wpn=%d",
 			g_NetTick, i, pl->isremote ? "remote" : "local",
 			pl->prop->pos.x, pl->prop->pos.y, pl->prop->pos.z,
 			pl->vv_theta, pl->vv_verta, pl->bondhealth, pl->isdead ? 1 : 0,
-			pl->prop->chr ? pl->prop->chr->damage : -1.f, pl->prop->chr ? pl->prop->chr->maxdamage : -1.f);
+			pl->prop->chr ? pl->prop->chr->damage : -1.f, pl->prop->chr ? pl->prop->chr->maxdamage : -1.f, pl->hands[0].gset.weaponnum);
 	}
 }
 

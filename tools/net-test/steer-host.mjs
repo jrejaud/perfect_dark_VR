@@ -26,10 +26,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function readTrace() {
 	const pid = sh('adb', ['-s', SERIAL, 'shell', 'pidof', 'com.perfectdark.port.netplay']).trim();
-	const out = sh('adb', ['-s', SERIAL, 'shell', `logcat -d --pid=${pid} -s PerfectDark | grep NETTRACE | tail -4`]);
+	const out = sh('adb', ['-s', SERIAL, 'shell', `logcat -d --pid=${pid} -s PerfectDark | grep -E 'NETTRACE.*(p[0-9] |aim )' | tail -6`]);
 	const st = {};
 	for (const line of out.split('\n')) {
-		const m = line.match(/tick=(\d+) p(\d) (local|remote) pos=\((-?\d+),(-?\d+),(-?\d+)\) theta=([\d.]+) verta=(-?[\d.]+) health=([\d.]+) dead=(\d)(?: chrdamage=([\d.-]+)\/([\d.-]+))?/);
+		const m = line.match(/tick=(\d+) p(\d) (local|remote) pos=\((-?\d+),(-?\d+),(-?\d+)\) theta=(-?[\d.]+) verta=(-?[\d.]+) health=([\d.]+) dead=(\d)(?: chrdamage=([\d.-]+)\/([\d.-]+))?/);
 		if (m) st[m[3]] = { tick: +m[1], x: +m[4], y: +m[5], z: +m[6], theta: +m[7], health: +m[9], dead: +m[10], dmg: m[11] ?? '?' };
 	}
 	return st;
@@ -45,7 +45,7 @@ const wrap = (d) => ((d + 540) % 360) - 180;
 
 let last = null, stuck = 0, side = 'd', best = Infinity, sinceBest = 0;
 for (let step = 0; step < maxSteps; step++) {
-	await sleep(2100); // trace period is 2 s
+	await sleep(1100); // trace period is 1 s
 	// keep the Quest driving lock (15 min TTL) for the whole run, or another agent takes the
 	// headset mid-test and closes the game (2026-10-11)
 	try { sh('quest', ['claim']); } catch {}
@@ -58,7 +58,7 @@ for (let step = 0; step < maxSteps; step++) {
 	console.log(`step ${step} host=(${host.x},${host.z}) th=${host.theta} vr=(${vr.x},${vr.z}) dist=${dist.toFixed(0)} turn=${turn.toFixed(0)} vrhealth=${vr.health} vrdmg=${vr.dmg}`);
 	if (Math.abs(turn) > 4) press(turn > 0 ? 'right' : 'left', Math.abs(turn) / TURN_DEG_PER_MS);
 	if (faceOnly) { if (Math.abs(turn) <= 4) break; continue; }
-	if (dist < stopDist) { console.log('arrived'); break; }
+	if (dist < stopDist && Math.abs(vr.y - host.y) < 120) { console.log('arrived'); break; }
 	if (dist < best - 100) { best = dist; sinceBest = 0; } else if (++sinceBest >= 5) {
 		// bouncing between the same walls: wander, then home again
 		press(Math.random() < 0.5 ? 'left' : 'right', 300 + Math.random() * 500);

@@ -16302,10 +16302,31 @@ static bool vrHandCanStartMotionAttack(s32 handnum, struct hand *hand)
     }
 }
 
+#ifndef PLATFORM_N64
+// Set by the vrsim test hook (port/vr/vr_input.cpp, "give=<weaponnum>"): hand the local
+// player that weapon once, so agent tests can fire guns without finding a pickup.
+int g_VrSimGiveWeapon = 0;
+#endif
+
 void bgunTickGameplay(bool triggeron) {
     s32 gunsfiring[2] = {false, false};
     struct player *player = g_Vars.currentplayer;
     s32 i;
+
+#ifndef PLATFORM_N64
+    // Held while the vrsim file says give=N: keep the gun equipped with a full magazine (VR
+    // reloads by hand, so an empty magazine counts as an empty gun and auto-switches away).
+    if (g_VrSimGiveWeapon > 0 && !player->isremote) {
+        if (player->hands[HAND_RIGHT].gset.weaponnum != g_VrSimGiveWeapon) {
+            invGiveSingleWeapon(g_VrSimGiveWeapon);
+            bgunSetAmmoQuantity(AMMOTYPE_SMG, 200);
+            bgunEquipWeapon(g_VrSimGiveWeapon);
+        }
+        if (player->hands[HAND_RIGHT].loadedammo[0] < 8) {
+            player->hands[HAND_RIGHT].loadedammo[0] = 32;
+        }
+    }
+#endif
 
 
     // Remove weapons if in passive mode

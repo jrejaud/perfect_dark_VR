@@ -698,11 +698,14 @@ XrResult update_vr_controllers(XrTime predicted_time) {
 // yaw/pitch: degrees, the aim relative to where the head looks (yaw + = right, pitch + = up).
 // sx/sy: right thumbstick (turning); lsx/lsy: left thumbstick (walking). Delete the file to
 // hand control back to the real controllers. Read every 15 frames; costs one fopen.
+extern "C" int g_VrSimGiveWeapon;
+
 static void vrSimApply(void)
 {
     static int sFrame = 0;
     static bool sOn = false;
     static float sTrig = 0, sYaw = 0, sPitch = 0, sSx = 0, sSy = 0, sLsx = 0, sLsy = 0;
+    static float sGive = 0, sLastGive = 0;
     static float sA = 0, sB = 0, sX = 0, sY = 0, sMenu = 0, sLGrip = 0, sRGrip = 0, sLTrig = 0;
 
     if ((sFrame++ % 15) == 0) {
@@ -713,6 +716,7 @@ static void vrSimApply(void)
             if (fgets(line, sizeof(line), f)) {
                 sTrig = sYaw = sPitch = sSx = sSy = sLsx = sLsy = 0;
                 sA = sB = sX = sY = sMenu = sLGrip = sRGrip = sLTrig = 0;
+                sGive = 0;
                 for (char *tok = strtok(line, " \t\r\n"); tok; tok = strtok(nullptr, " \t\r\n")) {
                     float v = 0;
                     if (sscanf(tok, "trigger=%f", &v) == 1) sTrig = v;
@@ -730,11 +734,14 @@ static void vrSimApply(void)
                     else if (sscanf(tok, "lgrip=%f", &v) == 1) sLGrip = v;
                     else if (sscanf(tok, "rgrip=%f", &v) == 1) sRGrip = v;
                     else if (sscanf(tok, "ltrig=%f", &v) == 1) sLTrig = v;
+                    else if (sscanf(tok, "give=%f", &v) == 1) sGive = v;
                 }
             }
             fclose(f);
         }
     }
+    g_VrSimGiveWeapon = (sOn && sGive > 0) ? (int)sGive : 0; // held while the file says give=N
+    sLastGive = sGive;
     if (!sOn) {
         return;
     }
@@ -753,6 +760,9 @@ static void vrSimApply(void)
     r.controller_pose.position.y = -0.25f;
     r.controller_pose.position.z = -0.35f;
     r.is_active = true;
+    if ((sFrame % 90) == 1) {
+        vr_log("[VRSIM] pose q=(%.3f,%.3f,%.3f,%.3f) gCtrlQuat[1]=(%.3f,%.3f,%.3f,%.3f) trig=%.0f", r.controller_pose.orientation.w, r.controller_pose.orientation.x, r.controller_pose.orientation.y, r.controller_pose.orientation.z, gCtrlQuat[1][0], gCtrlQuat[1][1], gCtrlQuat[1][2], gCtrlQuat[1][3], sTrig);
+    }
 
     const bool pressed = sTrig > 0.5f;
     r.select.changedSinceLastSync = (r.select.currentState != (XrBool32)pressed);
