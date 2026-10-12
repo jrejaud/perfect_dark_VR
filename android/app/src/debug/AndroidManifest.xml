@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only (merged over src/main): declare optional hand tracking so Horizon OS
+     skips its "controller required" launch check. Lets agent tests launch the game while the
+     controllers are asleep (the vrsim hook supplies input). Release builds are unaffected. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+</manifest>
