@@ -17,7 +17,7 @@ const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? Number(args[i
 const stopDist = opt('--stop-dist', 500);
 const maxSteps = opt('--max-steps', 40);
 const faceOnly = args.includes('--face');
-const SERIAL = process.env.QUEST_SERIAL || '2G0YC5ZF7S04M8';
+const SERIAL = process.env.QUEST_SERIAL || execFileSync('adb', ['devices']).toString().split('\n').map((l) => l.split('\t')).find((p) => p[1] === 'device')?.[0];
 const TURN_DEG_PER_MS = 0.22; // measured: ~66 deg per 300 ms hold
 
 const sh = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });

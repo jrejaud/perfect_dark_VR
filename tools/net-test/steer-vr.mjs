@@ -16,7 +16,7 @@ const maxSteps = opt('--max-steps', 60);
 const attackSecs = opt('--attack-secs', 20);
 const melee = args.includes('--melee'); // walk into punching range while attacking
 const giveWeapon = opt('--give', 0); // keep this weapon equipped through the vrsim hook
-const SERIAL = process.env.QUEST_SERIAL || '2G0YC5ZF7S04M8';
+const SERIAL = process.env.QUEST_SERIAL || execFileSync('adb', ['devices']).toString().split('\n').map((l) => l.split('\t')).find((p) => p[1] === 'device')?.[0];
 const PKG = 'com.perfectdark.port.netplay';
 const SIM = `/sdcard/Android/data/${PKG}/files/data/vrsim`;
 

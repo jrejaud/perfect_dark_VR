@@ -1,5 +1,29 @@
 # Perfect Dark VR
 
+> ## Experimental online net play (this branch: `net-play`)
+>
+> This fork adds **online Combat Simulator** to Perfect Dark VR by merging the
+> [perfect-dark-pc-port](https://github.com/perfect-dark-pc-port/perfect_dark) team's
+> experimental `port-net` netcode into Alex-LeTux's VR port. Quest players can play each other,
+> and Quest and PC (`port-net` build) players can play together. It is janky and experimental:
+> Combat Simulator only (no co-op; the upstream netcode doesn't support it), and expect bugs.
+>
+> **Install (Quest):** sideload the APK from the latest
+> [release](../../releases). It installs as a separate app, "Perfect Dark VR (NTSC) [netplay]",
+> next to the regular one. Pick your own NTSC 1.1 ROM in its launcher, the same as the regular build.
+>
+> **Play:**
+> - **Host:** in the launcher pick **Host**, then **Start**. Set up Combat Simulator, wait for
+>   players to join, then start the match.
+> - **Join:** in the launcher pick **Join**, type the host's IP (`1.2.3.4` or `1.2.3.4:port`) with the
+>   headset keyboard, then **Start**.
+> - Same Wi-Fi works as is. Over the internet, the host forwards **UDP 27100** on their router to
+>   their headset (or uses a VPN such as Tailscale or ZeroTier).
+> - Everyone needs the same ROM and the same build.
+>
+> Credits: Alex-LeTux (Perfect Dark VR) and the perfect-dark-pc-port team (`port-net` netcode).
+> The netcode details are in [docs/netplay.md](docs/netplay.md).
+
 **VR-only fork of Perfect Dark**  
 **Targeting standalone VR headsets and PCVR**  
 This fork is focused on developing VR features.
