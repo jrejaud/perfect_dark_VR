@@ -1930,14 +1930,6 @@ void chr0f0220ec(struct chrdata *chr, s32 lvupdate240, bool arg2)
 {
 	struct model *model = chr->model;
 
-#ifndef PLATFORM_N64
-	// net game client: a bot's position comes from the server (SVC_CHR_MOVE), so its animation
-	// plays in place instead of moving it
-	if (chr->aibot && g_NetMode == NETMODE_CLIENT) {
-		arg2 = false;
-	}
-#endif
-
 	if (g_Vars.tickmode == TICKMODE_CUTSCENE) {
 		if (chr->prop->type == PROPTYPE_PLAYER) {
 			chr->hidden &= ~CHRHFLAG_00000800;
@@ -2448,10 +2440,6 @@ s32 chrTick(struct prop *prop)
 					}
 				}
 			} else {
-#ifndef PLATFORM_N64
-				// net game client: a bot is a puppet of the server, so it runs no action logic here
-				if (!(chr->aibot && g_NetMode == NETMODE_CLIENT))
-#endif
 				chraTick(chr);
 
 				if (chr->model == NULL) {
