@@ -16,6 +16,8 @@
 #include "game/hudmsg.h"
 #include "game/playermgr.h"
 #include "game/bondgun.h"
+#include "game/chraction.h"
+#include "lib/model.h"
 #include "game/game_1531a0.h"
 #include "game/game_0b0fd0.h"
 #include "game/title.h"
@@ -781,6 +783,7 @@ static void netClientEvReceive(struct netclient *cl)
 			case SVC_PROP_DOOR: rc = netmsgSvcPropDoorRead(&cl->in, cl); break;
 			case SVC_PROP_LIFT: rc = netmsgSvcPropLiftRead(&cl->in, cl); break;
 			case SVC_CHR_DAMAGE: rc = netmsgSvcChrDamageRead(&cl->in, cl); break;
+			case SVC_CHR_MOVE: rc = netmsgSvcChrMoveRead(&cl->in, cl); break;
 			case SVC_CHR_DISARM: rc = netmsgSvcChrDisarmRead(&cl->in, cl); break;
 			default:
 				rc = 1;
@@ -912,6 +915,17 @@ static void netTraceTick(void)
 	sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u input textinput=%d mode=%d rxpackets=%u rxbytes=%u peers=%u svcerrs=%u errno=%d", g_NetTick, inputIsTextInputActive(), g_NetMode,
 		g_NetHost ? g_NetHost->totalReceivedPackets : 0, g_NetHost ? g_NetHost->totalReceivedData : 0, g_NetHost ? (u32)g_NetHost->connectedPeers : 0, g_NetServiceErrs, g_NetServiceErrno);
 
+	// bot pointers are stale while a stage loads; only read them during a running match
+	for (s32 i = 0; g_Vars.normmplayerisrunning && i < g_BotCount && i < MAX_BOTS; ++i) {
+		struct chrdata *bot = g_MpBotChrPtrs[i];
+		if (bot && bot->prop && bot->model) {
+			sysLogPrintf(LOG_NOTE | LOGFLAG_NOCON, "NETTRACE tick=%u bot%d pos=(%.0f,%.0f,%.0f) roty=%.2f anim=%d frame=%.0f dead=%d",
+				g_NetTick, i, bot->prop->pos.x, bot->prop->pos.y, bot->prop->pos.z,
+				bot->aibot ? bot->aibot->roty : 0.f, bot->model->anim ? modelGetAnimNum(bot->model) : -1,
+				bot->model->anim ? modelGetCurAnimFrame(bot->model) : 0.f, chrIsDead(bot) ? 1 : 0);
+		}
+	}
+
 	for (s32 i = 0; i < MAX_PLAYERS; ++i) {
 		const struct player *pl = g_Vars.players[i];
 		if (!pl || !pl->prop) {
@@ -963,6 +977,15 @@ void netEndFrame(void)
 				}
 			}
 			if (g_NetNextUpdate <= g_NetTick) {
+				// bots (simulants): clients puppet them from these updates (netClientBotPuppetTick)
+				if (g_Vars.normmplayerisrunning) {
+					for (s32 i = 0; i < g_BotCount && i < MAX_BOTS; ++i) {
+						struct chrdata *bot = g_MpBotChrPtrs[i];
+						if (bot && bot->aibot && bot->prop && bot->model) {
+							netmsgSvcChrMoveWrite(&g_NetMsg, bot);
+						}
+					}
+				}
 				g_NetNextUpdate = g_NetTick + g_NetServerUpdateRate;
 			}
 		}
@@ -1062,6 +1085,8 @@ void netPlayersAllocate(void)
 
 void netSyncIdsAllocate(void)
 {
+	netBotStatesReset();
+
 	// allocate sync ids sequentially for all active or paused props
 	g_NetNextSyncId = 1;
 

@@ -33,6 +33,10 @@
 #include "lib/anim.h"
 #include "data.h"
 #include "types.h"
+#ifndef PLATFORM_N64
+#include "net/net.h"
+#include "net/netmsg.h"
+#endif
 
 #define PICKUPCRITERIA_DEFAULT  0
 #define PICKUPCRITERIA_CRITICAL 1
@@ -887,6 +891,14 @@ s32 botTick(struct prop *prop)
 	f32 targetangle;
 	f32 oldangle;
 	f32 newangle;
+
+#ifndef PLATFORM_N64
+	// Net game client: bots are puppets of the server (SVC_CHR_MOVE); no AI runs here.
+	if (aibot && g_NetMode == NETMODE_CLIENT) {
+		netClientBotPuppetTick(chr);
+		return chrTick(prop);
+	}
+#endif
 
 	updateable = (prop->flags & PROPFLAG_NOTYETTICKED) && g_Vars.lvupdate240;
 
