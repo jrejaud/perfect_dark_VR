@@ -14741,6 +14741,14 @@ void bgunRender(Gfx * *gdlptr)
 
     player = g_Vars.currentplayer;
 
+#ifndef PLATFORM_N64
+    // Net play: a remote player's first-person gun and hands are never on this screen, and the
+    // VR viewmodel code below places them with THIS headset's controllers and shares one global
+    // copy model -- so drawing them put a second pair of hands (the "four arms") in VR.
+    if (player->isremote) {
+        return;
+    }
+#endif
 
     if (player->visionmode == VISIONMODE_XRAY) {
         for (i = 0; i < 2; i++) {
