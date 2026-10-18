@@ -347,6 +347,15 @@ set(SRC
   ${SRC_LIB}
 )
 
+# Mission checkpoints (port/src/savestate.c): put the game's globals in their own linker
+# sections and route its heap allocations into the checkpoint arena. See savestate_game.h.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+  set_source_files_properties(
+    ${SRC_GAME} ${SRC_LIB_MP3} ${SRC_LIB_NAUDIO} ${SRC_LIB_ULTRA_AUDIO} ${SRC_LIB_GU} ${SRC_LIB}
+    PROPERTIES COMPILE_OPTIONS "-include;savestate_game.h"
+  )
+endif()
+
 if(WIN32)
   list(APPEND SRC "${CMAKE_SOURCE_DIR}/dist/windows/icon.rc")
 endif()

@@ -40,6 +40,7 @@
 #include "config.h"
 
 #include "../port/vr/vr_settings.h"
+#include "savestate.h"
 
 #ifdef ANDROID
 #include <android/log.h>
@@ -531,6 +532,22 @@ MenuItemHandlerResult menuhandlerVRDebugMtxPos(s32 operation, struct menuitem *i
     return 0;
 }
 
+MenuItemHandlerResult menuhandlerVRAutoSave(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+    switch (operation) {
+        case MENUOP_GET:
+            return g_SavestateAutoSave ? true : false;
+        case MENUOP_SET:
+            g_SavestateAutoSave = data->checkbox.value ? true : false;
+            g_Vars.modifiedfiles |= MODFILE_GAME;
+            break;
+        case MENUOP_CHECKHIDDEN:
+            return !savestateSupported();
+    }
+
+    return 0;
+}
+
 MenuDialogHandlerResult menudialogVROptions(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
 {
     if (operation == MENUOP_CLOSE) {
@@ -732,6 +749,14 @@ struct menuitem g_VRWeaponsOptionsMenuItems[] = {
                 (uintptr_t)"Lasers for all weapons",
                 0,
                 menuhandlerVRLaserDotForAll,
+        },
+        {
+                MENUITEMTYPE_CHECKBOX,
+                0,
+                MENUITEMFLAG_LITERAL_TEXT,
+                (uintptr_t)"Auto-Save on Objective",
+                0,
+                menuhandlerVRAutoSave,
         },
         {
                 MENUITEMTYPE_SEPARATOR,
@@ -5379,6 +5404,27 @@ MenuItemHandlerResult menuhandlerInventoryList(s32 operation, struct menuitem *i
     return 0;
 }
 
+// Load the in-memory checkpoint (port/src/savestate.c). Hidden until one exists, and on a
+// completed mission's endscreen, where there is nothing to retry.
+MenuItemHandlerResult menuhandlerLoadCheckpoint(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+    switch (operation) {
+        case MENUOP_CHECKHIDDEN:
+            if (!savestateHasCheckpoint()) {
+                return true;
+            }
+            if (g_MenuData.root == MENUROOT_ENDSCREEN && !g_Vars.bond->isdead && !g_Vars.bond->aborted && objectiveIsAllComplete()) {
+                return true;
+            }
+            break;
+        case MENUOP_SET:
+            savestateRequestLoad();
+            break;
+    }
+
+    return 0;
+}
+
 MenuItemHandlerResult menuhandlerAbortMission(s32 operation, struct menuitem *item, union handlerdata *data)
 {
     if (operation == MENUOP_SET) {
@@ -5555,6 +5601,14 @@ struct menuitem g_MissionPauseMenuItems[] = {
                 0,
                 0,
                 NULL,
+        },
+        {
+                MENUITEMTYPE_SELECTABLE,
+                0,
+                MENUITEMFLAG_LITERAL_TEXT,
+                (uintptr_t)"Load Checkpoint",
+                0,
+                menuhandlerLoadCheckpoint,
         },
         {
                 MENUITEMTYPE_SELECTABLE,

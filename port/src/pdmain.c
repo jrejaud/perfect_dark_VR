@@ -47,6 +47,7 @@
 #include "game/lang.h"
 #include "game/lv.h"
 #include "game/timing.h"
+#include "savestate.h"
 #include "game/music.h"
 #include "game/stubs/game_175f50.h"
 #include "game/game_175f90.h"
@@ -553,6 +554,7 @@ void mainLoop(void)
         dhudReset();
         zbufReset(g_StageNum);
         lvReset(g_StageNum);
+        savestateOnStageStart();
         viReset(g_StageNum);
         frametimeCalculate();
         profileReset();
@@ -627,6 +629,8 @@ void mainTick(void)
         }
     }
 #endif
+
+        savestateTick();
 
         frametimeCalculate();
         profileReset();

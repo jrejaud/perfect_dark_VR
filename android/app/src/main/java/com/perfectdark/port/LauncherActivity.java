@@ -324,6 +324,11 @@ public class LauncherActivity extends AppCompatActivity {
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra(MainActivity.EXTRA_FROM_LAUNCHER, true);
         String netArgs = buildNetArgs();
+        // game_args (launch extra, test tooling): extra command-line arguments, e.g. "--boot-stage 48 --profile 0"
+        String gameArgs = getIntent() != null ? getIntent().getStringExtra("game_args") : null;
+        if (gameArgs != null && !gameArgs.trim().isEmpty()) {
+            netArgs = (netArgs + " " + gameArgs.trim()).trim();
+        }
         if (!netArgs.isEmpty()) {
             android.util.Log.i("PerfectDark", "Net play args: " + netArgs);
             intent.putExtra(MainActivity.EXTRA_ARGS, netArgs);

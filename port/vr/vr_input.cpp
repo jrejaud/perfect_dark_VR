@@ -695,10 +695,13 @@ XrResult update_vr_controllers(XrTime predicted_time) {
 // values replace the RIGHT controller every frame. One line of key=value pairs, e.g.
 //   trigger=1 yaw=-10 pitch=5 sx=0 sy=0 lsx=0 lsy=0
 // Buttons (1 = held): a b rgrip (right), x y menu lgrip ltrig (left).
+// qsave=1 / qload=1 take / load the mission checkpoint (port/src/savestate.c), once per 0 -> 1.
 // yaw/pitch: degrees, the aim relative to where the head looks (yaw + = right, pitch + = up).
 // sx/sy: right thumbstick (turning); lsx/lsy: left thumbstick (walking). Delete the file to
 // hand control back to the real controllers. Read every 15 frames; costs one fopen.
 extern "C" int g_VrSimGiveWeapon;
+extern "C" void savestateRequestSave(void);
+extern "C" void savestateRequestLoad(void);
 
 static void vrSimApply(void)
 {
@@ -706,6 +709,7 @@ static void vrSimApply(void)
     static bool sOn = false;
     static float sTrig = 0, sYaw = 0, sPitch = 0, sSx = 0, sSy = 0, sLsx = 0, sLsy = 0;
     static float sGive = 0, sLastGive = 0;
+    static float sQSave = 0, sQLoad = 0, sLastQSave = 0, sLastQLoad = 0;
     static float sA = 0, sB = 0, sX = 0, sY = 0, sMenu = 0, sLGrip = 0, sRGrip = 0, sLTrig = 0;
 
     if ((sFrame++ % 15) == 0) {
@@ -717,6 +721,7 @@ static void vrSimApply(void)
                 sTrig = sYaw = sPitch = sSx = sSy = sLsx = sLsy = 0;
                 sA = sB = sX = sY = sMenu = sLGrip = sRGrip = sLTrig = 0;
                 sGive = 0;
+                sQSave = sQLoad = 0;
                 for (char *tok = strtok(line, " \t\r\n"); tok; tok = strtok(nullptr, " \t\r\n")) {
                     float v = 0;
                     if (sscanf(tok, "trigger=%f", &v) == 1) sTrig = v;
@@ -735,6 +740,8 @@ static void vrSimApply(void)
                     else if (sscanf(tok, "rgrip=%f", &v) == 1) sRGrip = v;
                     else if (sscanf(tok, "ltrig=%f", &v) == 1) sLTrig = v;
                     else if (sscanf(tok, "give=%f", &v) == 1) sGive = v;
+                    else if (sscanf(tok, "qsave=%f", &v) == 1) sQSave = v;
+                    else if (sscanf(tok, "qload=%f", &v) == 1) sQLoad = v;
                 }
             }
             fclose(f);
@@ -742,6 +749,11 @@ static void vrSimApply(void)
     }
     g_VrSimGiveWeapon = (sOn && sGive > 0) ? (int)sGive : 0; // held while the file says give=N
     sLastGive = sGive;
+    // qsave=1 / qload=1: take or load the mission checkpoint once per 0 -> 1 change
+    if (sOn && sQSave > 0 && sLastQSave <= 0) savestateRequestSave();
+    if (sOn && sQLoad > 0 && sLastQLoad <= 0) savestateRequestLoad();
+    sLastQSave = sOn ? sQSave : 0;
+    sLastQLoad = sOn ? sQLoad : 0;
     if (!sOn) {
         return;
     }

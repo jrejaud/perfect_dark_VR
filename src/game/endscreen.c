@@ -508,6 +508,8 @@ struct menuitem g_2PMissionEndscreenObjectivesVMenuItems[] = {
 	{ MENUITEMTYPE_END },
 };
 
+MenuItemHandlerResult menuhandlerLoadCheckpoint(s32 operation, struct menuitem *item, union handlerdata *data);
+
 struct menuitem g_SoloEndscreenObjectivesMenuItems[] = {
 	{
 		MENUITEMTYPE_OBJECTIVES,
@@ -516,6 +518,14 @@ struct menuitem g_SoloEndscreenObjectivesMenuItems[] = {
 		0,
 		0,
 		NULL,
+	},
+	{
+		MENUITEMTYPE_SELECTABLE,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"Load Checkpoint",
+		0,
+		menuhandlerLoadCheckpoint,
 	},
 	{
 		MENUITEMTYPE_SEPARATOR,
