@@ -397,7 +397,7 @@ void objectivesCheckAll(void)
 
 				if (objectiveGetDifficultyBits(i) & (1 << lvGetDifficulty())) {
 					if (status == OBJECTIVE_COMPLETE) {
-						savestateOnObjectiveComplete();
+						savestateOnObjectiveComplete(i);
 					}
 
 #if VERSION >= VERSION_JPN_FINAL

@@ -1,15 +1,25 @@
+// mmap's MAP_ANON and MAP_NORESERVE are extensions, hidden by glibc in strict C11 mode
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+
 #include <string.h>
 #include <PR/ultratypes.h>
 #include "system.h"
 #include "savestate.h"
 
-#if defined(__APPLE__) || defined(__unix__) || defined(__ANDROID__)
+#if defined(_WIN32)
+#include <windows.h>
+#elif !defined(__SWITCH__)
 #include <sys/mman.h>
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0
+#endif
 #endif
 
 // Checkpoint arena that the game's sysMem* calls are redirected to (savestate_game.h).
-// Kept apart from savestate.c so it builds without the game headers, for
-// tools/savestate-test.
+// Its bookkeeping lives inside the arena itself, so a checkpoint of the arena's bytes also
+// captures which blocks were allocated.
 
 static s32 g_SavestateArenaOverflowed = 0;
 
@@ -17,7 +27,11 @@ static s32 g_SavestateArenaOverflowed = 0;
 // First-fit allocator over one reserved region. Its bookkeeping lives inside the region,
 // so restoring the region's bytes also restores which blocks are allocated.
 
+#ifdef PLATFORM_64BIT
 #define ARENA_RESERVE (512u * 1024 * 1024)
+#else
+#define ARENA_RESERVE (128u * 1024 * 1024)
+#endif
 #define ARENA_ALIGN 16
 
 struct arenahdr {
@@ -35,6 +49,28 @@ struct arenablk {
 
 static u8 *g_ArenaBase = NULL;
 
+#ifdef _WIN32
+// Windows charges commit for every committed page whether touched or not, so only the
+// address range is reserved up front and pages are committed as the arena grows
+#define ARENA_COMMIT_STEP (1024u * 1024)
+static size_t g_ArenaCommitted = 0;
+#endif
+
+static s32 arenaCommit(size_t upto)
+{
+#ifdef _WIN32
+	if (upto > g_ArenaCommitted) {
+		const size_t want = (upto + ARENA_COMMIT_STEP - 1) / ARENA_COMMIT_STEP * ARENA_COMMIT_STEP;
+		const size_t end = want < ARENA_RESERVE ? want : ARENA_RESERVE;
+		if (!VirtualAlloc(g_ArenaBase + g_ArenaCommitted, end - g_ArenaCommitted, MEM_COMMIT, PAGE_READWRITE)) {
+			return 0;
+		}
+		g_ArenaCommitted = end;
+	}
+#endif
+	return 1;
+}
+
 #define ARENA_HDR ((struct arenahdr *)g_ArenaBase)
 #define ARENA_FIRST (sizeof(struct arenahdr))
 #define ARENA_BLK(off) ((struct arenablk *)(g_ArenaBase + (off)))
@@ -44,18 +80,30 @@ static s32 arenaInit(void)
 	if (g_ArenaBase) {
 		return 1;
 	}
-#if defined(__APPLE__) || defined(__unix__) || defined(__ANDROID__)
+#if defined(__SWITCH__)
+	// no lazily committed reservations; checkpoints are unsupported there
+	return 0;
+#else
+#ifdef _WIN32
+	void *p = VirtualAlloc(NULL, ARENA_RESERVE, MEM_RESERVE, PAGE_READWRITE);
+	if (!p) {
+		return 0;
+	}
+#else
 	void *p = mmap(NULL, ARENA_RESERVE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
 	if (p == MAP_FAILED) {
 		return 0;
 	}
-	g_ArenaBase = p;
-#else
-	return 0;
 #endif
+	g_ArenaBase = p;
+	if (!arenaCommit(ARENA_FIRST)) {
+		g_ArenaBase = NULL;
+		return 0;
+	}
 	ARENA_HDR->top = ARENA_FIRST;
 	ARENA_HDR->last = 0;
 	return 1;
+#endif
 }
 
 static s32 arenaOwns(const void *ptr)
@@ -93,7 +141,7 @@ void *savestateArenaAlloc(const u32 size)
 		}
 	}
 
-	if (ARENA_HDR->top + need > ARENA_RESERVE) {
+	if (ARENA_HDR->top + need > ARENA_RESERVE || !arenaCommit(ARENA_HDR->top + need)) {
 		if (!g_SavestateArenaOverflowed) {
 			sysLogPrintf(LOG_NOTE, "savestate: arena full, checkpoints disabled");
 		}

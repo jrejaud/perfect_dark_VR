@@ -38,7 +38,7 @@ If you want to support the VR build, you can support me on Ko-fi: https://ko-fi.
 - **Multi-Region Support:** Play with NTSC, PAL, or JPN ROMs.
 - **Accessibility:** Dedicated Left-handed mode included.
 - **Enhanced Graphics:** Built-in support for Community HD Texture Packs.
-- **Objective Checkpoints (optional):** turn on *Auto-Save on Objective* under VR Options → Weapons & Gameplay. Each time you complete an objective the game takes a checkpoint, and *Load Checkpoint* appears in the pause menu and on the mission-failed screen. Checkpoints are kept in memory for the current mission only (solo play, not net play); they are lost when you leave or restart the mission or close the app.
+- **Objective Checkpoints (optional):** turn on *Auto-Save on Objective* under Extended Options → Game. Each time you complete an objective the game takes a checkpoint, and *Load Checkpoint* appears in the pause menu and on the mission-failed screen. Checkpoints are kept in memory for the current mission only (solo play, not net play); they are lost when you leave or restart the mission or close the app.
 
 
 ## How to play 

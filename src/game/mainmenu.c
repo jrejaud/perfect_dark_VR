@@ -532,22 +532,6 @@ MenuItemHandlerResult menuhandlerVRDebugMtxPos(s32 operation, struct menuitem *i
     return 0;
 }
 
-MenuItemHandlerResult menuhandlerVRAutoSave(s32 operation, struct menuitem *item, union handlerdata *data)
-{
-    switch (operation) {
-        case MENUOP_GET:
-            return g_SavestateAutoSave ? true : false;
-        case MENUOP_SET:
-            g_SavestateAutoSave = data->checkbox.value ? true : false;
-            g_Vars.modifiedfiles |= MODFILE_GAME;
-            break;
-        case MENUOP_CHECKHIDDEN:
-            return !savestateSupported();
-    }
-
-    return 0;
-}
-
 MenuDialogHandlerResult menudialogVROptions(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
 {
     if (operation == MENUOP_CLOSE) {
@@ -749,14 +733,6 @@ struct menuitem g_VRWeaponsOptionsMenuItems[] = {
                 (uintptr_t)"Lasers for all weapons",
                 0,
                 menuhandlerVRLaserDotForAll,
-        },
-        {
-                MENUITEMTYPE_CHECKBOX,
-                0,
-                MENUITEMFLAG_LITERAL_TEXT,
-                (uintptr_t)"Auto-Save on Objective",
-                0,
-                menuhandlerVRAutoSave,
         },
         {
                 MENUITEMTYPE_SEPARATOR,
@@ -5996,11 +5972,7 @@ struct menuitem g_MainMenuMenuItems[] = {
         {
                 MENUITEMTYPE_SELECTABLE,
                 0,
-#ifdef PLATFORM_N64
                 MENUITEMFLAG_SELECTABLE_CLOSESDIALOG | MENUITEMFLAG_BIGFONT,
-#else
-		MENUITEMFLAG_SELECTABLE_CLOSESDIALOG | MENUITEMFLAG_BIGFONT | MENUITEMFLAG_ALWAYSDISABLED,
-#endif
                 L_MISC_446, // "Carrington Institute"
                 0x00000001,
                 NULL,
@@ -6008,11 +5980,7 @@ struct menuitem g_MainMenuMenuItems[] = {
         {
                 MENUITEMTYPE_SELECTABLE,
                 0,
-#ifdef PLATFORM_N64
                 MENUITEMFLAG_BIGFONT,
-#else
-		MENUITEMFLAG_BIGFONT | MENUITEMFLAG_ALWAYSDISABLED,
-#endif
                 (uintptr_t)&mainMenuTextLabel,
                 0x00000002,
                 menuhandlerMainMenuSoloMissions,
@@ -6020,11 +5988,7 @@ struct menuitem g_MainMenuMenuItems[] = {
         {
                 MENUITEMTYPE_SELECTABLE,
                 1,
-#ifdef PLATFORM_N64
                 MENUITEMFLAG_BIGFONT,
-#else
-		MENUITEMFLAG_BIGFONT | MENUITEMFLAG_ALWAYSDISABLED,
-#endif
                 (uintptr_t)&mainMenuTextLabel,
                 0x00000003,
                 menuhandlerMainMenuCombatSimulator,
@@ -6032,11 +5996,7 @@ struct menuitem g_MainMenuMenuItems[] = {
         {
                 MENUITEMTYPE_SELECTABLE,
                 2,
-#ifdef PLATFORM_N64
                 MENUITEMFLAG_BIGFONT,
-#else
-		MENUITEMFLAG_BIGFONT | MENUITEMFLAG_ALWAYSDISABLED,
-#endif
                 (uintptr_t)&mainMenuTextLabel,
                 0x00000004,
                 menuhandlerMainMenuCooperative,
@@ -6044,11 +6004,7 @@ struct menuitem g_MainMenuMenuItems[] = {
         {
                 MENUITEMTYPE_SELECTABLE,
                 3,
-#ifdef PLATFORM_N64
                 MENUITEMFLAG_BIGFONT,
-#else
-		MENUITEMFLAG_BIGFONT | MENUITEMFLAG_ALWAYSDISABLED,
-#endif
                 (uintptr_t)&mainMenuTextLabel,
                 0x00000005,
                 menuhandlerMainMenuCounterOperative,

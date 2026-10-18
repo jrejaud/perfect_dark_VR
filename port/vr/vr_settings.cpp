@@ -3,8 +3,6 @@
 
 #include "vr_settings.h"
 
-extern "C" int g_SavestateAutoSave;
-
 extern "C" float inputRumbleGetStrength(int playernum);
 extern "C" void inputRumbleSetStrength(int playernum, int strength);
 
@@ -35,7 +33,6 @@ extern "C" void vrSettingsSave(void)
     fprintf(f, "LeftHandedMode=%d\n", VrLeftHandedMode ? 1 : 0);
     fprintf(f, "SwapJoysticks=%d\n", VrSwapJoysticks ? 1 : 0);
     fprintf(f, "HideArms=%d\n", VrHideArms ? 1 : 0);
-    fprintf(f, "AutoSaveOnObjective=%d\n", g_SavestateAutoSave ? 1 : 0);
     fprintf(f, "ActiveTexturePack=%s\n", g_ActiveExtTexPack);
     fprintf(f, "; Your standing EYE height in cm -- where your eyes are off the floor, which is\n");
     fprintf(f, "; what the headset reports, roughly 13 cm below the top of your head. Set it from\n");
@@ -101,7 +98,6 @@ extern "C" void vrSettingsLoad(void)
             else if (strcmp(key, "HideArms") == 0) VrHideArms = (ival != 0);
             else if (strcmp(key, "MatchCharacterHeight") == 0) VrMatchCharacterHeight = (ival != 0);
             else if (strcmp(key, "FistClench") == 0) VrFistClench = ival;
-            else if (strcmp(key, "AutoSaveOnObjective") == 0) g_SavestateAutoSave = (ival != 0);
         }
             // 2. OTHERWISE, is it a floating-point number (%f)?
         else if (sscanf(line, "%63[^=]=%f", key, &fval) == 2) {

@@ -253,7 +253,9 @@ public class LauncherActivity extends AppCompatActivity {
         netInfo = findViewById(R.id.netInfo);
 
         SharedPreferences prefs = getSharedPreferences(NET_PREFS, MODE_PRIVATE);
-        String mode = prefs.getString("mode", "off");
+        // Net play is opt-in per launch: always start on Off (the last host address is kept),
+        // so a game joined once does not make every later launch try to connect.
+        String mode = "off";
         String addr = prefs.getString("addr", "");
 
         Intent in = getIntent();

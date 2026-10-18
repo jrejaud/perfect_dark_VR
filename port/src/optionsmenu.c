@@ -14,6 +14,7 @@
 #include "video.h"
 #include "input.h"
 #include "config.h"
+#include "savestate.h"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -2207,6 +2208,21 @@ struct menudialogdef g_ExtendedAudioMenuDialog = {
 //    return 0;
 //}
 
+static MenuItemHandlerResult menuhandlerAutoSaveOnObjective(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+    switch (operation) {
+        case MENUOP_CHECKHIDDEN:
+            return !savestateSupported();
+        case MENUOP_GET:
+            return g_SavestateAutoSave;
+        case MENUOP_SET:
+            g_SavestateAutoSave = data->checkbox.value;
+            break;
+    }
+
+    return 0;
+}
+
 // VR force Use Key Reloads = true and hide
 static MenuItemHandlerResult menuhandlerUseKeyReloads(s32 operation, struct menuitem *item, union handlerdata *data)
 {
@@ -2571,6 +2587,14 @@ struct menuitem g_ExtendedGameMenuItems[] = {
                 (uintptr_t)"Use Key Reloads",
                 0,
                 menuhandlerUseKeyReloads,
+        },
+        {
+                MENUITEMTYPE_CHECKBOX,
+                0,
+                MENUITEMFLAG_LITERAL_TEXT,
+                (uintptr_t)"Auto-Save on Objective",
+                0,
+                menuhandlerAutoSaveOnObjective,
         },
         {
                 MENUITEMTYPE_SEPARATOR,

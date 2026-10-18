@@ -8,7 +8,7 @@
 // A save copies the game's globals, its memp heap and the checkpoint arena; a load
 // copies them back. Both run at the top of mainTick(), between game frames.
 
-// "Auto-Save on Objective" VR option (pd-vr.ini AutoSaveOnObjective), off by default.
+// "Auto-Save on Objective" (Extended Options > Game; pd.ini Game.AutoSaveOnObjective), off by default.
 extern s32 g_SavestateAutoSave;
 
 s32 savestateSupported(void);
@@ -17,8 +17,8 @@ s32 savestateHasCheckpoint(void);
 void savestateRequestSave(void);
 void savestateRequestLoad(void);
 
-// Called by objectivesCheckAll() when an objective flips to complete.
-void savestateOnObjectiveComplete(void);
+// Called by objectivesCheckAll() when objective <index> flips to complete.
+void savestateOnObjectiveComplete(s32 index);
 
 // Called by mainLoop() whenever a stage (re)starts; drops the checkpoint.
 void savestateOnStageStart(void);

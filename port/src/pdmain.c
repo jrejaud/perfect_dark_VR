@@ -48,6 +48,8 @@
 #include "game/lv.h"
 #include "game/timing.h"
 #include "savestate.h"
+
+void unlockMissionsOnStageStart(void); // unlockmissions.c
 #include "game/music.h"
 #include "game/stubs/game_175f50.h"
 #include "game/game_175f90.h"
@@ -555,6 +557,7 @@ void mainLoop(void)
         zbufReset(g_StageNum);
         lvReset(g_StageNum);
         savestateOnStageStart();
+        unlockMissionsOnStageStart();
         viReset(g_StageNum);
         frametimeCalculate();
         profileReset();
