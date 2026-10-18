@@ -19,6 +19,7 @@
 #include "lib/str.h"
 #include "data.h"
 #include "types.h"
+#include "unlockmissions.h"
 #include "mpsetups.h"
 
 // bss
@@ -827,6 +828,9 @@ bool filemgrAttemptOperation(s32 device, bool closeonsuccess)
 		break;
 	case FILEOP_LOAD_GAME:
 		errnum = gamefileLoad(device);
+		if (errnum == 0) {
+			unlockMissionsOnProfileLoaded();
+		}
 		break;
 	case FILEOP_LOAD_MPPLAYER:
 		errnum = mpplayerfileLoad(

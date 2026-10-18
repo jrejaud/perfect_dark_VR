@@ -299,10 +299,10 @@ int main(int argc, const char **argv)
         g_StageNum = STAGE_CITRAINING;
     } else if (g_StageNum < 0x01 || g_StageNum > 0x5d) {
         // stage num out of range
-    g_FileAutoSelect = sysArgGetInt("--profile", -1);
-
         g_StageNum = STAGE_TITLE; // boot normal !!
     }
+
+    g_FileAutoSelect = sysArgGetInt("--profile", -1);
 
     if (g_NetJoinLatch || g_NetHostLatch) {
         if (g_FileAutoSelect < 0) {
