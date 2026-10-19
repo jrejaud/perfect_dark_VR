@@ -1,7 +1,9 @@
 # GCC/Linux build + headless run environment for testing checkpoints
-# (tools/savestate-test/linux-test.sh). Software GL through Mesa llvmpipe under Xvfb.
+# (tools/savestate-test/linux-test.sh, linux-run.sh, linux-ui.sh). Software GL through Mesa
+# llvmpipe under Xvfb; xdotool presses keys, ImageMagick and ffmpeg capture the screen.
 FROM ubuntu:24.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 	build-essential cmake ninja-build pkg-config python3 git \
 	libsdl2-dev zlib1g-dev xvfb xauth libgl1-mesa-dri libglx-mesa0 mesa-utils \
+	xdotool imagemagick ffmpeg \
 	&& rm -rf /var/lib/apt/lists/*

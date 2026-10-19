@@ -9,15 +9,15 @@
 				sscanf(env, "%d,%d", &saveframe, &loadframe);
 			}
 		}
-		if (g_StageNum < STAGE_TITLE && saveframe >= 0 && !saved && g_Vars.lvframenum >= saveframe) {
+		if (g_StageNum < STAGE_TITLE && g_StageNum != STAGE_CITRAINING && saveframe >= 0 && !saved && g_Vars.lvframenum >= saveframe) {
 			saved = 1;
 			g_SavestatePendingSave = 1;
 		}
-		if (g_StageNum < STAGE_TITLE && loadframe >= 0 && !loaded && g_Vars.lvframenum >= loadframe) {
+		if (g_StageNum < STAGE_TITLE && g_StageNum != STAGE_CITRAINING && loadframe >= 0 && !loaded && g_Vars.lvframenum >= loadframe) {
 			loaded = 1;
 			g_SavestatePendingLoad = 1;
 		}
-		if (g_StageNum < STAGE_TITLE && g_Vars.bond && (++ticks % 600) == 0) {
+		if (g_StageNum < STAGE_TITLE && g_StageNum != STAGE_CITRAINING && g_Vars.bond && (++ticks % 600) == 0) {
 			sysLogPrintf(LOG_NOTE, "savestate-test: frame %d pos=(%.0f,%.0f,%.0f)", g_Vars.lvframenum,
 				g_Vars.bond->prop->pos.x, g_Vars.bond->prop->pos.y, g_Vars.bond->prop->pos.z);
 		}
