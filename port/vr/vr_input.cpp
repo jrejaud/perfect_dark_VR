@@ -696,10 +696,13 @@ XrResult update_vr_controllers(XrTime predicted_time) {
 //   trigger=1 yaw=-10 pitch=5 sx=0 sy=0 lsx=0 lsy=0
 // Buttons (1 = held): a b rgrip (right), x y menu lgrip ltrig (left).
 // qsave=1 / qload=1 take / load the mission checkpoint (port/src/savestate.c), once per 0 -> 1.
+// kill=1 kills the player once (death-flow tests); while the file exists, menu changes are logged.
+// lpose=1 holds the left controller (and the menu panel the game attaches to it) in front of the face.
 // yaw/pitch: degrees, the aim relative to where the head looks (yaw + = right, pitch + = up).
 // sx/sy: right thumbstick (turning); lsx/lsy: left thumbstick (walking). Delete the file to
 // hand control back to the real controllers. Read every 15 frames; costs one fopen.
 extern "C" int g_VrSimGiveWeapon;
+extern "C" { int g_VrSimMenuFront = 0; int g_VrSimKill = 0; int g_VrSimActive = 0; }
 extern "C" void savestateRequestSave(void);
 extern "C" void savestateRequestLoad(void);
 
@@ -710,6 +713,8 @@ static void vrSimApply(void)
     static float sTrig = 0, sYaw = 0, sPitch = 0, sSx = 0, sSy = 0, sLsx = 0, sLsy = 0;
     static float sGive = 0, sLastGive = 0;
     static float sQSave = 0, sQLoad = 0, sLastQSave = 0, sLastQLoad = 0;
+    static float sLPose = 0;
+    static float sKill = 0, sLastKill = 0;
     static float sA = 0, sB = 0, sX = 0, sY = 0, sMenu = 0, sLGrip = 0, sRGrip = 0, sLTrig = 0;
 
     if ((sFrame++ % 15) == 0) {
@@ -722,6 +727,8 @@ static void vrSimApply(void)
                 sA = sB = sX = sY = sMenu = sLGrip = sRGrip = sLTrig = 0;
                 sGive = 0;
                 sQSave = sQLoad = 0;
+                sLPose = 0;
+                sKill = 0;
                 for (char *tok = strtok(line, " \t\r\n"); tok; tok = strtok(nullptr, " \t\r\n")) {
                     float v = 0;
                     if (sscanf(tok, "trigger=%f", &v) == 1) sTrig = v;
@@ -740,6 +747,8 @@ static void vrSimApply(void)
                     else if (sscanf(tok, "rgrip=%f", &v) == 1) sRGrip = v;
                     else if (sscanf(tok, "ltrig=%f", &v) == 1) sLTrig = v;
                     else if (sscanf(tok, "give=%f", &v) == 1) sGive = v;
+                    else if (sscanf(tok, "lpose=%f", &v) == 1) sLPose = v;
+                    else if (sscanf(tok, "kill=%f", &v) == 1) sKill = v;
                     else if (sscanf(tok, "qsave=%f", &v) == 1) sQSave = v;
                     else if (sscanf(tok, "qload=%f", &v) == 1) sQLoad = v;
                 }
@@ -747,6 +756,10 @@ static void vrSimApply(void)
             fclose(f);
         }
     }
+    g_VrSimMenuFront = sOn && sLPose > 0;
+    g_VrSimActive = sOn;
+    if (sOn && sKill > 0 && sLastKill <= 0) g_VrSimKill = 1;
+    sLastKill = sOn ? sKill : 0;
     g_VrSimGiveWeapon = (sOn && sGive > 0) ? (int)sGive : 0; // held while the file says give=N
     sLastGive = sGive;
     // qsave=1 / qload=1: take or load the mission checkpoint once per 0 -> 1 change
@@ -787,6 +800,13 @@ static void vrSimApply(void)
     r.thumbstick.isActive = XR_TRUE;
 
     ControllerInputState &l = gControllerStates[0];
+    if (sLPose > 0) {
+        // hold the left controller in front of the face, so the menu panel the game hangs off it
+        // is in view on a headset that is sitting on a desk
+        l.controller_pose.orientation = {0.f, -0.70710678f, 0.f, 0.70710678f}; // turned toward the face, like checking a watch
+        l.controller_pose.position = {-0.2f, -0.2f, -0.5f};
+        l.is_active = true;
+    }
     l.thumbstick.currentState.x = sLsx;
     l.thumbstick.currentState.y = sLsy;
     l.thumbstick.isActive = XR_TRUE;

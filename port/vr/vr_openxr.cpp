@@ -211,6 +211,8 @@ static std::vector<XrSwapchainImageOpenGLKHR> g_swapchainImages[1];
 bool g_frameStarted = false;
 static XrFrameState g_frameState   = { XR_TYPE_FRAME_STATE };
 static std::array<XrView, 2> g_frameViews = { XrView{XR_TYPE_VIEW}, XrView{XR_TYPE_VIEW} };
+// vrsim lpose=1 (agent UI testing, port/vr/vr_input.cpp): show the menu panel straight ahead
+extern "C" int g_VrSimMenuFront;
 
 static XrReferenceSpaceType gPlaySpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
 static bool g_colorSpaceExtSupported = false;
@@ -1825,6 +1827,13 @@ static void vr_submit_frame(XrFrameState& frameState, const std::array<XrView, 2
                 gCtrlPos[ctrlL][2] / 100 - 0.2f
         };
         menuLayerL.size = {1.0f * XrAspect, 1.0f};
+    }
+
+    if (g_VrSimMenuFront) {
+        // an off-head headset's controllers lie on the desk; hold the menu panel 0.9 m ahead,
+        // facing the eyes, so screenshots and recordings can see it
+        menuLayerL.pose.orientation = {0.f, 0.f, 0.f, 1.f};
+        menuLayerL.pose.position = {0.f, 0.f, -0.9f};
     }
 
     // --- HUD Right hand ---

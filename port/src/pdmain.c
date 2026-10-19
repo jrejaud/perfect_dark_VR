@@ -590,6 +590,41 @@ void mainLoop(void)
 
 
 
+#include "game/player.h"
+
+// vrsim test hook (port/vr/vr_input.cpp): kill=1 kills the player once; while vrsim is active,
+// menu and stage changes are logged as "uitrace:" lines so agent test scripts can wait on them
+extern int g_VrSimKill, g_VrSimActive;
+extern char *menuResolveDialogTitle(struct menudialogdef *dialogdef);
+
+static void vrSimTick(void)
+{
+    static s32 lastroot = -2, laststage = -2;
+    static struct menudialogdef *lastdef = (struct menudialogdef *)-1;
+
+    if (g_VrSimKill) {
+        g_VrSimKill = 0;
+        if (g_StageNum < STAGE_TITLE && g_Vars.bond && !g_Vars.bond->isdead) {
+            g_Vars.currentplayer = g_Vars.bond;
+            playerDie(true);
+            sysLogPrintf(LOG_NOTE, "uitrace: killed the player at frame %d", g_Vars.lvframenum);
+        }
+    }
+
+    if (g_VrSimActive) {
+        struct menudialogdef *def = g_Menus[0].curdialog ? g_Menus[0].curdialog->definition : NULL;
+        if (g_StageNum != laststage) {
+            laststage = g_StageNum;
+            sysLogPrintf(LOG_NOTE, "uitrace: stage %d", g_StageNum);
+        }
+        if (g_MenuData.root != lastroot || def != lastdef) {
+            lastroot = g_MenuData.root;
+            lastdef = def;
+            sysLogPrintf(LOG_NOTE, "uitrace: menu %d %s", g_MenuData.root, def ? menuResolveDialogTitle(def) : "(none)");
+        }
+    }
+}
+
 void mainTick(void)
 {
     Gfx *gdl = NULL;
@@ -634,6 +669,7 @@ void mainTick(void)
 
         savestateTick();
         unlockMissionsTick();
+        vrSimTick();
 
         frametimeCalculate();
         profileReset();
