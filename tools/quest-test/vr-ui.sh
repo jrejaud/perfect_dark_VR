@@ -13,6 +13,11 @@ set -e
 S=$1; CMD=$2; shift 2
 P=com.perfectdark.port.netplay
 SIM=/sdcard/Android/data/$P/files/data/vrsim
+# Screenshot and recording commands. The defaults are this author's Quest helpers; point them at
+# your own (a Quest screenshot needs Meta's capture service: plain screencap is black in VR).
+SHOT_CMD=${VR_SHOT_CMD:-"quest -s $S screenshot"}
+REC_START_CMD=${VR_REC_START_CMD:-"$HOME/.claude/skills/quest/scripts/quest-vr-record start"}
+REC_STOP_CMD=${VR_REC_STOP_CMD:-"$HOME/.claude/skills/quest/scripts/quest-vr-record stop"}
 put() { adb -s "$S" shell "echo 'lpose=1 $1' > $SIM; chmod 666 $SIM"; }
 
 case "$CMD" in
@@ -51,14 +56,14 @@ waitlog)
 	;;
 shot)
 	sleep 1
-	quest -s "$S" screenshot "$1" >/dev/null
+	$SHOT_CMD "$1" >/dev/null
 	echo "$1"
 	;;
 rec-start)
-	~/.claude/skills/quest/scripts/quest-vr-record start "$1" left >/dev/null
+	$REC_START_CMD "$1" left >/dev/null
 	;;
 rec-stop)
-	~/.claude/skills/quest/scripts/quest-vr-record stop >/dev/null
+	$REC_STOP_CMD >/dev/null
 	;;
 idle)
 	put ""
